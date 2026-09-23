@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.2.0
+Version: 0.3.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Python orchestrator + Illustrator worker implemented; the one page end to end milestone now runs successfully inside Illustrator (REAL_TEST + a Latvian path job)**
+Status: **Milestone 2 done - the persistent batch queue (state.json, recovery, continue/retry) runs real multi page Illustrator batches; the GUI is not started yet**
 
 ## Working
 
@@ -30,6 +30,25 @@ Status: **Python orchestrator + Illustrator worker implemented; the one page end
 * Legacy ScriptUI application (`src/`) still works and now includes the shared
   engine from `jsx/cleanup.jsx` (no duplicate cleanup code).
 
+### Queue + persistent state (milestone 2)
+
+* `core/state.py` - `JOB/CONFIG/state.json`: `WAITING`, `RUNNING`, `DONE`, `ERROR`,
+  `SKIPPED`, `INTERRUPTED`; atomic writes, attempt counting, timestamps, tolerant
+  loading (a corrupt file is quarantined, never fatal), `RUNNING -> INTERRUPTED`
+  recovery at startup.
+* `core/queue.py` - `BatchQueue`: `build_queue`, `run_next`, `run_all_enabled`,
+  `continue_queue`, `retry_errors`, `retry_interrupted`, `skip_item`, `reset_item`,
+  `status_table`, `summary`. Adapter agnostic, no COM in the core.
+* `core/pagejob.py` - one shared plan for `run_one` and the queue, the DONE rule
+  (output exists and is not empty) and the output preparation
+  (`copied` / `skipped` / `failed`).
+* `batch.py` CLI - `--build`, `--status`, `--run-next`, `--run-all`, `--continue`,
+  `--retry-errors`, `--retry-interrupted`, `--skip ID`, `--reset ID`, ...
+* Rules in force: DONE needs `OK` **and** an output; finished pages never rerun
+  without `--reset`; one bad page never stops the batch; only a COM failure aborts a
+  pass; a failed attempt removes its partial output so retries really run.
+* Details, schema and the real-run evidence: `docs/QUEUE_STATE.md`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -43,12 +62,14 @@ Status: **Python orchestrator + Illustrator worker implemented; the one page end
 | --- | --- |
 | `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring, `jsx/` ASCII only + no BOM + LF) |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 97 tests (Python 3.14 venv), including the absolute path and encoding guards |
+| `pytest` | 143 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue |
 | `app.py --diagnose` | paths and interpreter reported |
 | `run_one --preflight-only` (14 page demo PDF) | 17 checks OK, request JSON written to `runtime/current_job.json` |
 | `run_one --dry-run` | valid contract request produced |
-| **`run_one --job temp\REAL_TEST --pdf mans_fails.pdf --page 3`** | **MILESTONE OK**: request carries `C:/Users/.../temp/REAL_TEST/...` (absolute, forward slashes), `Statuss : OK`, `Objekti : 3`, `Output : ir (...60554124 bytes)`, result `job_id`/`run_id` match the request, MASTER template untouched (same size/hash), 0 documents left open in Illustrator |
+| **`run_one --job temp\REAL_TEST --pdf mans_fails.pdf --page 3`** | **MILESTONE OK**: absolute forward slash request paths, `Statuss : OK`, `Objekti : 3`, real output AI, MASTER template untouched, 0 documents left open |
 | **Same run with a Latvian job folder** (`temp\Realitātes tests LV`, PDF `Māja Āčēģī.pdf`) | **MILESTONE OK**: Latvian characters survive request JSON, worker log and result JSON without mojibake |
+| **Batch queue, real Illustrator** (`temp\QUEUE_JOB`, `temp/run_queue_batch_test.py`) | `--run-all` -> 001 DONE / 002 SKIPPED / 003 DONE / 004 DONE; second pass reruns nothing; lost per-page template -> 003 ERROR + 004 DONE; `--retry-errors` -> 003 DONE; process killed during page 4 -> `--status` shows 004 INTERRUPTED -> `--continue` -> 004 DONE |
+| **13 page pass** of the same PDF through the queue | `DONE=13 SKIPPED=1`, `state.json` written after every page, 0 documents left open |
 | Adapter handshake (fake Illustrator) | stale result deleted, matching result accepted, mismatching result rejected + logged, late result picked up, timeout with log tail, COM error as `ERROR` result |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
@@ -87,9 +108,9 @@ Status: **Python orchestrator + Illustrator worker implemented; the one page end
 
 ## Next milestone
 
-1. Implement queue + state: `state.json` with atomic writes,
-   WAITING/RUNNING/DONE/ERROR/SKIPPED, `RUNNING -> INTERRUPTED` recovery on
-   restart, CONTINUE / retry, final DONE/SKIPPED/ERROR summary.
-2. Then the Tkinter GUI (PROJECT / PDF / MAPPING / RUN).
-3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and
-   a real `.ait` template run.
+1. Tkinter GUI (PROJECT / PDF / MAPPING / RUN) on top of `core/queue.py` +
+   `core/state.py` - now that the queue and the CLI are proven.
+2. Multi PDF queue in one run (the schema already carries `pdf` per item).
+3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
+   real `.ait` template run (`template_mode = "saveas"`).
+4. "Stop after the current page" for the batch loop.

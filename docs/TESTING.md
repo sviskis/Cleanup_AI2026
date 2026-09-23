@@ -54,6 +54,50 @@ escapes), because ExtendScript decodes a large BOM-less `.jsx` as ANSI.
 See `MIGRATION_PLAN.md` §3 for the full procedure and what to replace first
 (real templates with an `ARTWORK` layer).
 
+## 0b. The batch queue (milestone 2)
+
+```powershell
+# 1. build the queue (JOB/CONFIG/state.json) for pages 1-4
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --build --pages 1-4
+
+# 2. what would run, without touching Illustrator
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --run-all --dry-run --skip-illustrator-check
+
+# 3. the real batch (one worker call per page)
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --run-all
+
+# 4. the per page report
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --status
+
+# 5. resume after a crash / Ctrl+C / a closed window
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --continue
+
+# 6. retry the failed pages, after fixing whatever was wrong
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --retry-errors
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --retry-interrupted
+
+# 7. single items (id = job_id, page number or output file name)
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --reset 3
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --skip 5
+```
+
+Pass criteria:
+
+* `--status` shows one `PAGE / STATE / OUTPUT` row per page plus a counts line;
+* a second `--run-all` runs nothing (`DONE=0 SKIPPED=0 ERROR=0` in the pass summary);
+* `JOB/CONFIG/state.json` carries the same states, with `started`/`finished`
+  timestamps per page;
+* killing the process during a page leaves exactly one `RUNNING` item; the next
+  command (even `--status`) turns it into `INTERRUPTED`, and `--continue` finishes it;
+* an existing output without `--overwrite` is `SKIPPED`, never silently replaced;
+* a page level failure leaves the other pages running (`ERROR` + `DONE` in one pass);
+* Illustrator has no documents open afterwards (`app.Documents.Count == 0`).
+
+The full scenario (deliberate SKIP, lost per-page template, kill/continue cycle),
+the state machine and the `state.json` schema are in `docs/QUEUE_STATE.md`. The
+automated driver used for the evidence is `temp/run_queue_batch_test.py`; it writes
+every CLI output to `temp/queue_test_logs/`.
+
 ## 1. Automated checks
 
 ```powershell

@@ -29,9 +29,10 @@ PDF page
 
 ## Status
 
-Version **0.2.0**. The Python pipeline and the JSX worker are implemented and
-verified by automated gates; the one page end to end run inside Illustrator is the
-last open step of the first milestone (`MIGRATION_PLAN.md` §3). See `STATUS.md`.
+Version **0.3.0**. The Python pipeline, the JSX worker, the one page milestone and
+the **persistent batch queue** (state.json, recovery, continue/retry, CLI) are
+implemented and verified with real Illustrator runs. The Tkinter GUI is the next
+milestone. See `STATUS.md` and `docs/QUEUE_STATE.md`.
 
 ## Quick start (new pipeline)
 
@@ -50,10 +51,19 @@ python -m venv .venv
 
 # 5. one page, end to end
 .venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3
+
+# 6. the whole queue (state.json in JOB/CONFIG, resumable)
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --build --pages 1-4
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --run-all
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --status
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --continue      # after a crash/stop
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --retry-errors  # after fixing a page
 ```
 
-`--preflight-only` validates without touching Illustrator; `--dry-run` writes and
-prints the request JSON.
+`run_one`: `--preflight-only` validates without touching Illustrator; `--dry-run`
+writes and prints the request JSON. `batch`: `--status` shows the per page table,
+finished pages are never redone, one bad page never stops the batch; exit code 1
+means at least one ERROR/INTERRUPTED is still open.
 
 ## Quick start (legacy JSX application)
 
@@ -110,10 +120,11 @@ jsx/                          the only Illustrator side code
   worker.jsx                  one page worker (request -> result)
 
 pdf_ai_batch/                 Python orchestrator
-  app.py  run_one.py  paths.py  logging_setup.py
-  core/  project, pdf_info, naming, template_mapper, config, contract, jsonio, validation
+  app.py  run_one.py  batch.py  paths.py  logging_setup.py
+  core/  project, pdf_info, naming, template_mapper, config, contract, pagejob,
+         state, queue, jsonio, validation
   adapters/illustrator.py     the ONLY COM code (pywin32)
-  tests/                      80 pytest tests
+  tests/                      143 pytest tests (contract, encoding, state, queue)
 
 src/                          legacy ScriptUI application (phase 1, kept as baseline)
 legacy/current_working_v10.jsx frozen baseline (generated, hashed)
@@ -122,6 +133,8 @@ tools/                        gates + migration tools (see tools/README.md)
 tests/                        JSX unit tests, JSON contract test, shared fixtures
 docs/                         CODE_ANALYSIS, ARCHITECTURE (legacy), WORKFLOW, TESTING, PYTHON_ENV
 config/default_config.json    JSON mirror of the legacy config
+docs/                         CODE_ANALYSIS, ARCHITECTURE (legacy), QUEUE_STATE,
+                              WORKFLOW, TESTING, PYTHON_ENV
 MIGRATION_PLAN.md             the approved migration plan and its status
 ```
 
@@ -282,11 +295,13 @@ flow: `docs/ARCHITECTURE.md`. The reference script and its analysis:
 
 ## Roadmap
 
-* P1 - finish the one page milestone in Illustrator, then regression R1-R5 against
-  `legacy/current_working_v10.jsx`.
-* P1 - queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED, resume,
-  continue, retry errors, final batch summary.
-* P2 - Tkinter GUI: PROJECT / PDF / MAPPING / RUN tabs with the mapping treeview.
+* P1 - regression R1-R5 against `legacy/current_working_v10.jsx`, and a real `.ait`
+  template run (`template_mode = "saveas"`).
+* P1 - **queue + state: done** (`state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED/
+  INTERRUPTED, resume, continue, retry errors, per page status, final batch summary)
+  - see `docs/QUEUE_STATE.md`.
+* P2 - Tkinter GUI: PROJECT / PDF / MAPPING / RUN tabs with the mapping treeview,
+  driven by `core/queue.py` + `core/state.py`.
 * P2 - multi PDF queue in one run.
 * P3 - SQLite history, ZIP handoff of `AI_OUT`, profiles ("conservative" /
   "aggressive" cleanup).

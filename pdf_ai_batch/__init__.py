@@ -13,5 +13,5 @@ The contract between the two halves is JSON in runtime/; see
 pdf_ai_batch/core/contract.py and docs/ARCHITECTURE.md.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["__version__"]

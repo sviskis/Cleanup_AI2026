@@ -36,9 +36,9 @@ state with recovery, milestone-first order).
 | 5 | Python core: project, pdf_info, naming, template_mapper, config, contract, validation | **DONE** |
 | 6 | `adapters/illustrator.py` (pywin32, attach -> launch, file handoff, timeout) | **DONE** |
 | 7 | First milestone: one page end to end (`run_one.py`) | **DONE** - two real Illustrator runs recorded in `STATUS.md` |
-| 8 | Queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED, resume, continue, retry | **NEXT** |
-| 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **LATER** |
-| 10 | Batch policy: one bad page must not stop the batch, final summary | **NEXT** |
+| 8 | Queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED, resume, continue, retry | **DONE** (`docs/QUEUE_STATE.md`) |
+| 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **NEXT** |
+| 10 | Batch policy: one bad page must not stop the batch, final summary | **DONE** for the policy + summary; multi PDF queue still open |
 | 11 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
 
 ## 2. What exists now (v0.2.0)
@@ -116,13 +116,13 @@ Two contract rules the run proved and that every later milestone must keep (see
 
 | Requirement | Where it lands |
 | --- | --- |
-| `state.json` with atomic writes | `pdf_ai_batch/core/state.py` (NEXT) |
-| A page left in `RUNNING` after a restart becomes `INTERRUPTED` / `ERROR_RECOVERABLE` and can be retried | `core/state.py` + run tab (NEXT) |
-| `DONE` only when the worker returned a matching OK **and** the output AI exists | queue milestone (the rule is already used by `run_one`) |
-| CONTINUE after restart, retry errors, stop after the current page | queue + GUI milestones |
-| Mapping table (PAGE / USE / TEMPLATE / LAYER / OUTPUT / STATUS) with select all/none/invert, auto assign, manual assign, move up/down, refresh, validate | `gui/mapping_tab.py` |
-| Batch summary DONE / SKIPPED / ERROR at the end | queue milestone (`logging_setup` already writes the batch log) |
-| Multi PDF queue (several PDFs, each with its own page plan) | queue milestone (one PDF per config, many PDFs per JOB) |
+| `state.json` with atomic writes | `pdf_ai_batch/core/state.py` - **DONE** |
+| A page left in `RUNNING` after a restart becomes `INTERRUPTED` and can be retried | `core/state.py` + `core/queue.py` - **DONE** (GUI run tab later) |
+| `DONE` only when the worker returned a matching OK **and** the output AI exists | `core/pagejob.output_ready` - **DONE** for `run_one` and the queue |
+| CONTINUE after restart, retry errors | `core/queue.py` + `batch.py` - **DONE**; "stop after the current page" is still open |
+| Mapping table (PAGE / USE / TEMPLATE / LAYER / OUTPUT / STATUS) with select all/none/invert, auto assign, manual assign, move up/down, refresh, validate | `gui/mapping_tab.py` (the queue state already carries the STATUS per page) |
+| Batch summary DONE / SKIPPED / ERROR at the end | `core/queue.BatchSummary` + `batch.py` - **DONE** |
+| Multi PDF queue (several PDFs, each with its own page plan) | still open (`state.json` already carries `pdf` per item) |
 
 ## 5. Non-goals (kept out on purpose)
 

@@ -1,11 +1,13 @@
 """Application entry point.
 
-Current stage (first milestone): the CLI proves one page end to end.
-The Tkinter GUI (PROJECT / PDF / MAPPING / RUN tabs) is the next milestone and
-will be launched from here as the default action.
+Current stage: the CLI proves the pipeline - one page (`run_one`) and the
+persistent batch queue (`batch`). The Tkinter GUI (PROJECT / PDF / MAPPING / RUN
+tabs) is a later milestone and will be launched from here.
 
     python app.py --diagnose
+    python app.py --health
     python app.py --run-one --job "C:/JOB" --pdf manual.pdf --page 17
+    python app.py --batch --job "C:/JOB" --run-all
     python -m pdf_ai_batch.app --diagnose
 
     python app.py            -> GUI when it exists, otherwise prints this help
@@ -19,6 +21,7 @@ from pathlib import Path
 
 from . import __version__, paths
 from .adapters.illustrator import IllustratorAdapter, illustrator_process_running
+from .batch import cli as batch_cli
 from .logging_setup import configure_console, setup_logging
 from .run_one import main as run_one_main
 
@@ -32,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--diagnose", action="store_true", help="print environment and path information")
     parser.add_argument("--health", action="store_true", help="check that a job can run now (files, runtime, Illustrator via attach -> launch)")
     parser.add_argument("--run-one", action="store_true", help="run the one page milestone test")
+    parser.add_argument("--batch", action="store_true", help="run the persistent batch queue (see pdf_ai_batch/batch.py)")
     parser.add_argument("--gui", action="store_true", help="start the GUI (next milestone)")
-    parser.add_argument("rest", nargs=argparse.REMAINDER, help="arguments forwarded to --run-one")
     return parser
 
 
@@ -80,7 +83,12 @@ def print_health() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    # parse_known_args: everything app.py does not define itself is forwarded to the
+    # sub-command. argparse.REMAINDER cannot do this, because an option looking
+    # argument like "--job" is reported as unrecognized before it is captured.
+    args, forwarded = parser.parse_known_args(argv)
+    forwarded = [arg for arg in forwarded if arg != "--"]
     configure_console()
 
     if args.version:
@@ -94,16 +102,21 @@ def main(argv: list[str] | None = None) -> int:
         return print_health()
 
     if args.run_one:
-        forwarded = [arg for arg in args.rest if arg != "--"]
         return run_one_main(forwarded)
 
+    if args.batch:
+        return batch_cli(forwarded)
+
     if args.gui:
-        print("GUI vēl nav ieviests (nākamais solis). Šobrīd izmanto --run-one vai --diagnose.")
+        print("GUI vēl nav ieviests (nākamais solis). Šobrīd izmanto --run-one, --batch vai --diagnose.")
         return 1
 
     build_parser().print_help()
     print("")
-    print(f"pdf_ai_batch {__version__} - pirmais solis: --run-one (vienas lapas tests), --diagnose, --health")
+    print(
+        f"pdf_ai_batch {__version__} - --batch (rinda + state.json), --run-one (viena lapa), "
+        "--diagnose, --health"
+    )
     return 0
 
 

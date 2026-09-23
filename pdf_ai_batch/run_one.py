@@ -25,28 +25,22 @@ Useful flags:
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
-import uuid
-from datetime import datetime
-from pathlib import Path
 
 from . import paths
 from .adapters.illustrator import IllustratorAdapter, IllustratorError, illustrator_process_running
-from .core import jsonio
-from .core.config import template_mode_for
+from .core import jsonio, pagejob
 from .core.contract import (
     STATUS_OK,
     STATUS_SKIP,
     TEMPLATE_MODE_COPY,
     TEMPLATE_MODE_SAVEAS,
-    build_request,
     validate_request,
 )
-from .core.naming import job_id_for, output_name_for
-from .core.pdf_info import PdfPageCountError, count_pages
+from .core.naming import new_run_id
+from .core.pagejob import PagePlanError
+from .core.pdf_info import PdfPageCountError
 from .core.project import JobProject, ProjectError
-from .core.template_mapper import default_template, page_template_pool, resolve_template
 from .core.validation import format_report, has_failures, preflight
 from .logging_setup import configure_console, setup_logging
 
@@ -84,29 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def new_run_id() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
-
-
 def print_line(text: str = "") -> None:
     print(text, flush=True)
-
-
-def prepare_output_copy(template: Path, output: Path, overwrite: bool, logger) -> tuple[bool, str]:
-    """Copy the template to the output (Python owns this for .ai templates)."""
-    if output.exists():
-        if not overwrite:
-            return False, "output jau eksistē un overwrite nav atļauts"
-        try:
-            output.unlink()
-        except OSError as exc:
-            return False, f"nevar izdzēst esošo output: {exc}"
-    try:
-        shutil.copy2(template, output)
-    except OSError as exc:
-        return False, f"nevar nokopēt template uz output: {exc}"
-    logger.info("Nokopēju template %s -> %s", template.name, output.name)
-    return True, ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -134,58 +107,52 @@ def main(argv: list[str] | None = None) -> int:
     print_line(f"LOG        : {project.log_dir}")
     print_line("")
 
-    # ---------------------------------------------------------------- pdf
+    # ---------------------------------------------------------------- plan
+    # "page -> template / output / layer / mode" is implemented ONCE, in
+    # core/pagejob.py, and shared with the batch queue. config.json (when valid and
+    # for this PDF) wins over the automatic positional mapping.
     try:
-        pdf_path = project.resolve_pdf(args.pdf)
+        plan = pagejob.plan_pages(
+            project,
+            pdf=args.pdf,
+            pages=[args.page],
+            template=args.template,
+            layer=args.layer,
+            clear_layer=not args.no_clear,
+            overwrite=bool(args.overwrite),
+            template_mode=args.template_mode,
+        )
     except ProjectError as exc:
         print_line(f"Kļūda: {exc}")
         return EXIT_USAGE
-
-    try:
-        page_count, count_method = count_pages(pdf_path)
     except PdfPageCountError as exc:
         print_line(f"Kļūda: {exc}")
         logger.error("Nevar noteikt lappušu skaitu: %s", exc)
         return EXIT_USAGE
-
-    if args.page > page_count:
-        print_line(f"Kļūda: lapa {args.page} pārsniedz PDF lappušu skaitu {page_count}")
+    except PagePlanError as exc:
+        print_line(f"Kļūda: {exc}")
         return EXIT_USAGE
 
-    print_line(f"PDF        : {pdf_path.name}")
-    print_line(f"Lapas      : {page_count} ({count_method})")
-    print_line(f"Apstrādā   : lapa {args.page}")
-    print_line("")
+    for warning in plan.warnings:
+        print_line(f"Brīdinājums: {warning}")
 
-    # ---------------------------------------------------------------- template
-    pool = project.page_template_pool()
-    fallback = default_template(project.template_dir)
-
-    if args.template:
-        template = resolve_template(args.template, project.template_dir, fallback)
-        if template is None:
-            print_line(f"Kļūda: template nav atrasts: {args.template}")
-            return EXIT_USAGE
-    elif args.page - 1 < len(pool):
-        template = pool[args.page - 1]
-    else:
-        template = fallback
-
-    if template is None:
-        print_line("Kļūda: nav neviena template un nav noklusētā (MASTER_*) template")
-        return EXIT_USAGE
-
-    print_line("Templates  : " + (", ".join(t.name for t in pool) if pool else "(nav lapu template)"))
-    print_line(f"Default    : {fallback.name if fallback else '(nav)'}")
-    print_line(f"Šai lapai  : {template.name}")
-
-    # ---------------------------------------------------------------- output
-    output_name = output_name_for(pdf_path, args.page, page_count)
-    output_path = project.output_dir / output_name
-    job_id = job_id_for(pdf_path, args.page)
+    job = plan.pages[0]
+    pdf_path = job.pdf
+    page_count = job.page_count
+    template = job.template
+    output_path = job.output
+    output_name = job.output_name
+    job_id = job.job_id
+    mode = job.mode
     run_id = new_run_id()
-    mode = args.template_mode if args.template_mode != "auto" else template_mode_for(template)
 
+    print_line(f"PDF        : {job.pdf_name}")
+    print_line(f"Lapas      : {page_count} ({job.count_method})")
+    print_line(f"Apstrādā   : lapa {job.page}")
+    print_line("")
+    print_line("Templates  : " + (", ".join(t.name for t in plan.pool) if plan.pool else "(nav lapu template)"))
+    print_line(f"Default    : {plan.fallback.name if plan.fallback else '(nav)'}")
+    print_line(f"Šai lapai  : {template.name}")
     print_line(f"Output     : {output_name}")
     print_line(f"Template režīms: {mode}")
     print_line(f"job_id     : {job_id}")
@@ -237,24 +204,17 @@ def main(argv: list[str] | None = None) -> int:
     overwrite = bool(args.overwrite)
 
     if mode == TEMPLATE_MODE_COPY and not args.dry_run and not args.preflight_only:
-        copied, reason = prepare_output_copy(template, output_path, overwrite, logger)
-        if not copied:
-            logger.info("SKIP: %s", reason)
-            print_line(f"SKIP: {reason}")
+        prep = pagejob.prepare_output_copy(template, output_path, overwrite, logger)
+        if prep.skipped:
+            logger.info("SKIP: %s", prep.reason)
+            print_line(f"SKIP: {prep.reason}")
             return EXIT_OK
+        if prep.failed:
+            logger.error("Nevar sagatavot output: %s", prep.reason)
+            print_line(f"Kļūda: {prep.reason}")
+            return EXIT_JOB_FAILED
 
-    request = build_request(
-        run_id=run_id,
-        job_id=job_id,
-        pdf=str(pdf_path),
-        page=args.page,
-        template=str(template),
-        output=str(output_path),
-        layer=args.layer,
-        clear_layer=not args.no_clear,
-        overwrite=overwrite,
-        template_mode=mode,
-    )
+    request = job.request(run_id)
 
     problems = validate_request(request)
     if problems:
@@ -314,10 +274,17 @@ def main(argv: list[str] | None = None) -> int:
     print_line(f"Output     : {'ir' if output_exists else 'NAV'} ({output_path}) {size} bytes")
     print_line("")
 
-    if result.status == STATUS_OK and output_exists:
+    ready, not_ready = pagejob.output_ready(output_path)
+    if result.status == STATUS_OK and ready:
         logger.info("OK %s | objects=%s | %s", output_path.name, result.objects_copied, result.stats or {})
         print_line("MILESTONE OK: viena lapa apstrādāta un rezultāts saņemts.")
         return EXIT_OK
+
+    if result.status == STATUS_OK and not ready:
+        # same rule as the queue: OK alone is not enough, the output must be usable
+        logger.error("OK, bet output nav derīgs: %s", not_ready)
+        print_line(f"MILESTONE FAILED: workers atgrieza OK, bet {not_ready}")
+        return EXIT_JOB_FAILED
 
     if result.status == STATUS_SKIP:
         logger.info("SKIP %s", output_path.name)

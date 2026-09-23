@@ -140,7 +140,30 @@ Fixtures `tests/fixtures/{request,result}_sample.json` are verified from **both*
 sides: `pdf_ai_batch/tests/test_contract.py` (Python) and
 `tests/jscript/test_json_contract.js` (JScript / ExtendScript).
 
-## 3. JOB layout
+## 3. Queue and state
+
+Milestone 2 added a persistent queue between "planning" and "running one page".
+The full description (state machine, schema, CLI, evidence) is
+[`docs/QUEUE_STATE.md`](docs/QUEUE_STATE.md); the short version:
+
+* `JOB/CONFIG/state.json` holds one item per page with the paths, the layer, the
+  mode and the run history (`state`, `attempts`, `last_run_id`, `error_*`,
+  timestamps). It is written atomically before **and** after every item.
+* States: `WAITING`, `RUNNING`, `DONE`, `ERROR`, `SKIPPED`, `INTERRUPTED`. A stale
+  `RUNNING` item is recovered as `INTERRUPTED` at startup - never `DONE`, never
+  stuck.
+* `DONE` requires the worker result `OK` **and** an existing output
+  (`core/pagejob.output_ready`); `OK` without output is `ERROR`.
+* A page level failure never stops the batch; only an adapter/COM failure aborts the
+  pass and leaves the remaining items `WAITING`.
+* `core/queue.py` (`BatchQueue`) is adapter agnostic - it calls the proven
+  `run_job()` of `adapters/illustrator.py` and imports no COM. `batch.py` is the
+  operator CLI (`--run-all`, `--continue`, `--retry-errors`, `--status`, ...).
+* `core/pagejob.py` is the ONE place where a page becomes
+  template/output/layer/mode, shared by `run_one` and the queue, so a single page
+  test and a batch page cannot drift apart.
+
+## 4. JOB layout
 
 ```text
 JOB/
@@ -155,7 +178,7 @@ JOB/
 Python creates missing folders (`JobProject.ensure_structure`); the worker never
 creates project folders.
 
-## 4. Naming
+## 5. Naming
 
 Python owns output names (`core/naming.py`):
 
@@ -169,7 +192,7 @@ Width is `max(3, digits(page_count))`; the job id is `manual_p017`. The older
 scheme (`manual_p03.ai`) exists only inside the frozen baseline
 (`legacy/current_working_v10.jsx`).
 
-## 5. Page count
+## 6. Page count
 
 ```python
 from pdf_ai_batch.core.pdf_info import count_pages
@@ -180,7 +203,7 @@ PyMuPDF first, `pypdf` as fallback, an explicit `PdfPageCountError` when both
 fail. No Illustrator probing and no assumptions about months or calendars: this is
 generic multi page PDF processing.
 
-## 6. Template mapping
+## 7. Template mapping
 
 1. Templates in `JOB/TEMPLATE` are sorted **naturally** (`1.ai`, `2.ai`, `3.ai`,
    `10.ai`; digit runs before letter runs, so `001_cover.ai` precedes
@@ -191,7 +214,7 @@ generic multi page PDF processing.
    second, and so on.
 4. A page without its own template inherits `defaults.template`.
 
-## 7. Logging and errors
+## 8. Logging and errors
 
 | Where | What |
 | --- | --- |
@@ -206,7 +229,7 @@ Failure policy: one bad page never stops the batch. The page is reported as
 `ERROR`, its partial output is removed and the loop continues (`CONTINUE` / state
 handling arrives with the queue milestone).
 
-## 8. Source of truth rules
+## 9. Source of truth rules
 
 1. **The cleanup algorithm exists exactly once**: `jsx/cleanup.jsx`. It is
    extracted from the reference script by `tools/migrate_extract_sections.ps1`
@@ -217,7 +240,7 @@ handling arrives with the queue milestone).
 4. Everything exchanged is JSON, defined in `pdf_ai_batch/core/contract.py` and
    mirrored by `jsx/cleanup.jsx` (`statsToContract`) and `jsx/worker.jsx`.
 
-## 9. Related documents
+## 10. Related documents
 
 | Document | Content |
 | --- | --- |

@@ -15,15 +15,18 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
 
 ## P1 - Important
 
-- [ ] Queue + state (`pdf_ai_batch/core/state.py`): `state.json` with atomic
-      writes, WAITING / RUNNING / DONE / ERROR / SKIPPED, `RUNNING` recovered to
-      `INTERRUPTED` (or `ERROR_RECOVERABLE`) after a restart, CONTINUE, retry
-      errors, stop after the current page.
-- [ ] `DONE` only when the worker returned a matching `OK` **and** the output AI
-      exists (already the rule in `run_one`, to be enforced by the queue).
-- [ ] Batch summary at the end: DONE / SKIPPED / ERROR counts plus aggregated
-      statistics, written to the batch log.
+- [x] Queue + state (`pdf_ai_batch/core/state.py`, `core/queue.py`, `batch.py`):
+  `state.json` with atomic writes, WAITING / RUNNING / DONE / ERROR / SKIPPED /
+  INTERRUPTED, `RUNNING` recovered to `INTERRUPTED` after a restart, CONTINUE,
+  retry errors, retry interrupted, skip/reset, per pass and per queue summaries.
+  See `docs/QUEUE_STATE.md`.
+- [x] `DONE` only when the worker returned a matching `OK` **and** the output AI
+  exists (enforced by `core/pagejob.output_ready` for both `run_one` and the queue).
+- [x] Batch summary at the end: DONE / SKIPPED / ERROR / INTERRUPTED counts plus
+  aggregated statistics, written to the batch log.
 - [ ] Multi PDF queue in one run (each PDF with its own page plan).
+- [ ] "Stop after the current page" (now: Ctrl+C leaves a recoverable `RUNNING`
+  item for `--continue`).
 
 ## P2 - Improvements
 

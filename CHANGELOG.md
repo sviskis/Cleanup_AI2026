@@ -5,6 +5,80 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
+## [0.3.0] - 2026-09-23
+
+Milestone 2: a **persistent batch queue with state recovery** on top of the proven
+one page pipeline. No GUI, no change to the cleanup algorithm, no change to the
+Python <-> JSX contract.
+
+### Added
+
+- `pdf_ai_batch/core/state.py` - `JOB/CONFIG/state.json`: the queue model
+  (`WAITING`, `RUNNING`, `DONE`, `ERROR`, `SKIPPED`, `INTERRUPTED`), atomic writes
+  through `jsonio.write_json_atomic`, transition helpers with timestamps and attempt
+  counting, tolerant loading (a corrupt file never raises), `RUNNING -> INTERRUPTED`
+  startup recovery and per state summaries.
+- `pdf_ai_batch/core/queue.py` - `BatchQueue` with `build_queue()`, `run_next()`,
+  `run_all_enabled()`, `continue_queue()`, `retry_errors()`, `retry_interrupted()`,
+  `skip_item()`, `reset_item()`, `set_enabled()`, `status_table()` and `summary()`.
+  The queue is adapter agnostic (duck typed `run_job`) and contains no COM code.
+- `pdf_ai_batch/core/pagejob.py` - the one implementation of
+  "page -> template / output / layer / mode" used by **both** `run_one` and the
+  queue (config.json wins over the automatic positional plan), plus the DONE rule
+  (`output_ready`: the output must exist and be non-empty) and
+  `prepare_output_copy` (`copied` / `skipped` / `failed`).
+- `pdf_ai_batch/batch.py` - the batch CLI: `--build`, `--status`, `--run-next`,
+  `--run-all`, `--continue`, `--retry-errors`, `--retry-interrupted`, `--skip ID`,
+  `--reset ID`, plus `--pages`, `--pdf`, `--overwrite`, `--dry-run`, `--json`,
+  `--max-items`. Exit code 0 = nothing failed, 1 = at least one ERROR/INTERRUPTED
+  left, 2 = usage/setup problem. `app.py --batch ...` forwards to it.
+- `pdf_ai_batch/tests/test_state.py` (18 tests) and
+  `pdf_ai_batch/tests/test_queue.py` (29 tests) with
+  `pdf_ai_batch/tests/fakes.py`, a fake Illustrator adapter (no COM).
+- `docs/QUEUE_STATE.md` - state machine, `state.json` schema and example, queue API,
+  CLI, failure policy, recovery/continue, test coverage and the real run evidence.
+
+### Changed
+
+- `run_one` now builds its request through `core/pagejob.py`, so one page and a
+  batch page use exactly the same plan; a valid `config.json` for the PDF also
+  applies to `run_one`. `new_run_id()` moved to `core/naming.py`.
+- `run_one` applies the same DONE rule as the queue: a worker `OK` with a missing
+  or empty output is reported as `MILESTONE FAILED`, not as success.
+- `app.py` argument forwarding fixed: `app.py --run-one --job ...`
+  (and the new `--batch`) used `argparse.REMAINDER`, which rejected option-like
+  arguments; it now uses `parse_known_args`.
+- `pdf_ai_batch/core/__init__.py` documents and exports the new modules.
+
+### Fixed
+
+- A **missing per-page template aborts only that page**, not the whole plan: the
+  intended template path is kept in the plan (with a warning) so the page fails as
+  `ERROR`/`OUTPUT_PREP_FAILED` and can be retried, while every other page still runs.
+- A **failed attempt deletes its partial output** (the template copy or a partial
+  AI), so `--retry-errors` really re-runs the page instead of skipping it because a
+  leftover file exists.
+- A missing template or an unwritable output is `ERROR`, never `SKIPPED`
+  (`prepare_output_copy` distinguishes `skipped` from `failed`).
+- The per-pass statistics counted a `SKIPPED` outcome as an error (the queue state
+  name differs from the worker status); a state -> status mapping fixes it.
+
+### Verified
+
+- `pytest`: 143 tests green (18 state, 29 queue, 2 fake-adapter helper modules'
+  coverage included in the queue suite).
+- Real Illustrator batch (`temp/QUEUE_JOB`, 14 page PDF, page 3 with its own
+  template through `config.json`), driven by `temp/run_queue_batch_test.py`:
+  `--build` -> 4 x WAITING; `--run-all` -> `001 DONE`, `002 SKIPPED`, `003 DONE`,
+  `004 DONE`; a second `--run-all` runs nothing; a lost per-page template ->
+  `003 ERROR` while **11 further pages finished in the same pass**
+  (`DONE=11 ERROR=1 SKIPPED=1`, 43 objects); `--retry-errors` -> `003 DONE`; the
+  process killed while page 4 was `RUNNING` -> `004 INTERRUPTED` after `--status`
+  -> `--continue` -> `004 DONE`. Final queue: `DONE=13 SKIPPED=1`. Illustrator had
+  0 documents open afterwards, `state.json` was written after every page and the
+  MASTER template was never modified.
+- CLI outputs of every step: `temp/queue_test_logs/*.txt`.
+
 ## [Unreleased]
 
 ### Added

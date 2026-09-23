@@ -16,11 +16,14 @@ for new jobs.
 from __future__ import annotations
 
 import re
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 DEFAULT_PATTERN = "{stem}__{page:0{width}d}.ai"
 MIN_WIDTH = 3
 DEFAULT_EXTENSION = ".ai"
+RUN_ID_FORMAT = "%Y%m%d-%H%M%S"
 
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_WINDOWS_NAMES = {
@@ -57,6 +60,16 @@ def output_name_for(pdf_name_or_path: str | Path, page: int, page_count: int) ->
 def job_id_for(pdf_name_or_path: str | Path, page: int) -> str:
     """Stable identifier of one page job, e.g. "manual_p017"."""
     return f"{pdf_stem(pdf_name_or_path)}_p{int(page):03d}"
+
+
+def new_run_id(when: datetime | None = None) -> str:
+    """Unique id of one run, e.g. "20260923-173858-3bd373".
+
+    It is written into the request and compared with the result, so a stale or
+    foreign result file can never be mistaken for the answer to this run.
+    """
+    stamp = (when or datetime.now()).strftime(RUN_ID_FORMAT)
+    return f"{stamp}-{uuid.uuid4().hex[:6]}"
 
 
 def validate_output_name(name: str) -> list[str]:
