@@ -64,7 +64,8 @@ def test_opening_a_job_fills_the_tabs(window, tmp_path, make_pdf):
     assert [window.mapping_tab.tree.item(row, "values")[1] for row in rows] == ["001", "002", "003"]
     first = window.mapping_tab.tree.item(rows[0], "values")
     assert first[0] == "[x]" and first[5] == "WAITING"
-    assert window.run_tab.current["text"] == "Page --- / 003"
+    assert window.run_tab.current["text"].endswith("/ 003")
+    assert "manual.pdf" in window.run_tab.current["text"]
 
 
 def test_mapping_actions_keep_the_row_selection(window, tmp_path, make_pdf):

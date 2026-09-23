@@ -1,4 +1,4 @@
-# Queue and persistent state (milestone 2)
+# Queue and persistent state (milestones 2 and 4)
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
@@ -84,6 +84,7 @@ Path: `JOB/CONFIG/state.json`. Written with `core/jsonio.write_json_atomic`
   "updated": "2026-09-23 18:01:21",
   "items": [
     {
+      "pdf_id": "mans_fails",
       "job_id": "mans_fails_p001",
       "page": 1,
       "state": "DONE",
@@ -113,7 +114,8 @@ Path: `JOB/CONFIG/state.json`. Written with `core/jsonio.write_json_atomic`
 | `version` | schema version (`1`); a different version is reported, not trusted blindly |
 | `session_id` | id of the session that wrote the file last (`new_run_id()` format) |
 | `job_root`, `created`, `updated` | JOB folder and document timestamps |
-| `job_id` | `<pdf stem>_p<page:03d>` — stable identity, also used as the worker `job_id` |
+| `pdf_id` | document identity: the PDF stem (`manualis`, `appendix`); written since milestone 4, derived from `pdf` when an older file is read |
+| `job_id` | `<pdf_id>_p<page:03d>` — stable identity, also used as the worker `job_id` |
 | `page` | 1 based page number |
 | `state` | one of the six states above |
 | `enabled` | `false` = planned but not to be run (used by `config.json` and `set_enabled`) |
@@ -140,17 +142,22 @@ item the operator can simply rebuild (`--run-all` or `--build`).
 | Function | Behaviour |
 | --- | --- |
 | `BatchQueue.open(project, adapter=...)` | load `state.json`, quarantine a broken file, `RUNNING -> INTERRUPTED` |
-| `build_queue(**plan)` | plan the pages (`pagejob.plan_pages`) and merge them into state: new pages become `WAITING`, existing items keep state/attempts/errors, plan fields are refreshed, pages outside the plan are disabled |
+| `build_queue(pdf=..., pdfs=...)` | plan the pages of the JOB (all documents by default, `pdf`/`pdfs` narrow it) and merge them into state: new pages become `WAITING`, existing items keep state/attempts/errors, plan fields are refreshed, pages outside the plan are disabled (never deleted) |
+| `run_documents([...])` | run the backlog of specific documents (the GUI's RUN CURRENT PDF); the whole project plan is refreshed first |
+| `reconcile_document(pdf)` | explicit RECONCILE after a page count change (`core/pagejob.apply_reconcile`) |
+| `duplicate_outputs()` | output file names that more than one item would write (the pass aborts before the first Illustrator call) |
+| `document_progress()` | per document counts + processed pages, in queue order |
 | `run_next()` | run the first runnable item (`WAITING`/`INTERRUPTED`) |
-| `run_all_enabled(rebuild=True)` | refresh the plan, then run every enabled runnable item |
+| `run_all_enabled(rebuild=True)` | refresh the plan, then run every enabled runnable item of every document |
 | `continue_queue()` | resume: `WAITING` + `INTERRUPTED` only, never `DONE`/`SKIPPED`/`ERROR` |
-| `retry_errors(run=True)` | `ERROR -> WAITING` and run them |
+| `retry_errors(run=True)` | `ERROR -> WAITING` and run them (all documents) |
 | `retry_interrupted(run=True)` | `INTERRUPTED -> WAITING` and run them |
 | `skip_item(id)` | mark one item `SKIPPED` (`DONE` must be reset first) |
 | `reset_item(id)` | back to `WAITING`, works on `DONE`/`SKIPPED` too |
 | `set_enabled(id, bool)` | enable/disable an item without touching its state |
-| `status_table()` | the compact `PAGE / STATE / OUTPUT` table |
-| `summary()` | counts per state + the statistics of the last pass |
+| `status_rows()` / `status_table()` | the compact `PDF / PAGE / STATE / OUTPUT` table plus the per document summary |
+| `summary()` | counts per state, per document rows + the statistics of the last pass |
+| `find(id, pdf=...)` | by `job_id`, page number or output name; a bare page number is ambiguous in a multi PDF JOB and raises a clear error |
 
 `build_queue` refreshes **plan fields** only (`template`, `output`, `layer`,
 `template_mode`, `clear_layer`, `overwrite`, `enabled`). Run history
@@ -160,45 +167,57 @@ rebuild. Important consequence: `--run-all` re-applies the plan, while
 temporarily broken template stays broken under `--continue` and is repaired by the
 next `--run-all`).
 
+Since milestone 4 the queue is **per document**: `JOB/CONFIG/config.json` version 2
+holds one plan per PDF, items carry `pdf_id`, and the order is document order (from
+`documents[]`) followed by page number. A document that is disabled, missing or
+cannot be planned has its items disabled - never reset - so its mapping and its
+history survive until the file is back.
+
 ## 5. CLI (`pdf_ai_batch/batch.py`)
 
 ```powershell
-# create / refresh the queue (config.json wins when it is valid)
+# create / refresh the queue of the WHOLE project (every configured PDF)
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --build --pages 1-4
 
-# the whole backlog
+# the whole backlog, or only one document
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --run-all
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --pdf appendix.pdf --run-all
 
-# resume after a crash / a Ctrl+C / a closed window
+# resume after a crash / a Ctrl+C / a closed window (every document)
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --continue
 
 # failed pages only
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --retry-errors
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --retry-interrupted
 
+# page count changed? reconcile ONE document explicitly
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --pdf appendix.pdf --reconcile
+
 # one page, or the report
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --run-next
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --status
 
-# single items (id = job_id, page number or output file name)
-.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --reset 3
-.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\QUEUE_JOB --skip mans_fails_p002
+# single items (id = job_id, page number scoped with --pdf, or output file name)
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --reset appendix_p003
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --pdf manualis.pdf --skip 2
 ```
 
 Extras used by the tests: `--dry-run`, `--max-items`, `--no-build`, `--overwrite`,
 `--pages "1-3,5"`, `--template`, `--layer`, `--template-mode`, `--timeout`,
 `--json report.json`, `--quiet`, `--skip-illustrator-check`.
 
-`--status` prints the table asked for in the milestone:
+`--status` prints the table asked for in the milestone (PDF column since M4):
 
 ```text
-PAGE  STATE         OUTPUT
-001   DONE          C:/JOB/AI_OUT/mans_fails__001.ai
-002   SKIPPED       C:/JOB/AI_OUT/mans_fails__002.ai
-003   DONE          C:/JOB/AI_OUT/mans_fails__003.ai
-004   DONE          C:/JOB/AI_OUT/mans_fails__004.ai
+PDF       PAGE  STATE         OUTPUT
+manualis  001   DONE          C:/JOB/AI_OUT/manualis__001.ai
+manualis  002   SKIPPED       C:/JOB/AI_OUT/manualis__002.ai
+manualis  003   DONE          C:/JOB/AI_OUT/manualis__003.ai
+appendix  001   DONE          C:/JOB/AI_OUT/appendix__001.ai
 
-Kopā: WAITING=0 RUNNING=0 DONE=3 ERROR=0 SKIPPED=1 INTERRUPTED=0 (kopā 4, iespējoti 4, rindā 0)
+PDFs: 2 | Lapas kopā: 4
+  manualis.pdf: 2/3 apstrādātas | WAITING=1 DONE=2 ...
+Kopā: WAITING=1 RUNNING=0 DONE=3 ERROR=0 SKIPPED=1 INTERRUPTED=0 (kopā 4, iespējoti 4, rindā 1)
 ```
 
 Exit codes: `0` no `ERROR`/`INTERRUPTED` left in the queue, `1` at least one is

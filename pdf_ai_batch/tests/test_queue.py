@@ -371,7 +371,10 @@ def test_summary_counts_and_run_statistics(project):
         "total": 3,
         "enabled": 3,
         "runnable": 0,
+        "pdfs": 1,
     }
+    assert summary.pdfs == 1 and summary.pages_total == 3
+    assert len(summary.documents) == 1 and summary.documents[0]["pdf"] == "manual.pdf"
     assert summary.run_stats["ok"] == 2
     assert summary.run_stats["error"] == 1
     assert summary.run_stats["objects_copied"] == 6  # 2 successful pages x 3 objects
@@ -460,13 +463,14 @@ def test_status_table_lists_every_page(project):
     table = batch.status_table()
     lines = table.splitlines()
 
-    assert lines[0] == "PAGE  STATE         OUTPUT"
-    assert lines[1].startswith("001") and state.DONE in lines[1]
-    assert lines[2].startswith("002") and state.ERROR in lines[2]
-    assert lines[3].startswith("003") and state.DONE in lines[3]
+    assert lines[0].startswith("PDF") and "PAGE" in lines[0] and "STATE" in lines[0]
+    assert lines[1].split()[0] == "manual" and lines[1].split()[1] == "001" and state.DONE in lines[1]
+    assert lines[2].split()[1] == "002" and state.ERROR in lines[2]
+    assert lines[3].split()[1] == "003" and state.DONE in lines[3]
     assert "Kopā:" in table
+    assert "PDFs: 1" in table
     assert "manual_p002" in table  # the failing item is explained below the table
-    assert batch.status_rows()[0][0] == "001"
+    assert batch.status_rows()[0][:2] == ("manual", "001")
 
 
 def test_overwrite_replaces_an_existing_output(project):

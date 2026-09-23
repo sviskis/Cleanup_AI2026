@@ -8,7 +8,7 @@ into `state.json` by the core queue - the GUI never writes state itself.
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from ..core import state
@@ -135,10 +135,16 @@ class MappingTab(ttk.Frame):
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
+
+        #: which document this table edits - plan edits never leak into another PDF
+        self.document_label = ttk.Label(self, text="PDF: -", font=("Segoe UI", 10, "bold"))
+        self.document_label.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.document_detail = ttk.Label(self, text="", foreground="#444")
+        self.document_detail.grid(row=1, column=0, sticky="w", pady=(0, 4))
 
         bar = ttk.Frame(self)
-        bar.grid(row=0, column=0, sticky="ew")
+        bar.grid(row=2, column=0, sticky="ew")
         for index in range(6):
             bar.columnconfigure(index, weight=1)
         actions = (
@@ -152,6 +158,7 @@ class MappingTab(ttk.Frame):
             ("ASSIGN TEMPLATE", self.on_assign_template, 1, 1),
             ("USE DEFAULT TEMPLATE", self.on_use_default, 1, 2),
             ("REFRESH", self.on_refresh, 1, 3),
+            ("RECONCILE PDF", self.on_reconcile, 1, 4),
         )
         for label, handler, row, column in actions:
             button = ttk.Button(bar, text=label, command=handler)
@@ -160,7 +167,7 @@ class MappingTab(ttk.Frame):
 
         columns = ("use", "page", "template", "layer", "output", "status")
         frame = ttk.Frame(self)
-        frame.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        frame.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="extended")
@@ -188,13 +195,13 @@ class MappingTab(ttk.Frame):
         self.tree.tag_configure("disabled", background="#f2f2f2")
 
         bottom = ttk.Frame(self)
-        bottom.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        bottom.grid(row=4, column=0, sticky="ew", pady=(6, 0))
         bottom.columnconfigure(0, weight=1)
         self.detail = ttk.Label(bottom, text="", foreground="#444", wraplength=900, justify="left")
         self.detail.grid(row=0, column=0, sticky="w")
 
         panel = ttk.LabelFrame(self, text="Pārbaudes (core/validation)")
-        panel.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        panel.grid(row=5, column=0, sticky="ew", pady=(8, 0))
         panel.columnconfigure(0, weight=1)
         self.report = tk.Text(panel, height=7, wrap="none", state="disabled")
         self.report.grid(row=0, column=0, sticky="ew")
@@ -329,6 +336,65 @@ class MappingTab(ttk.Frame):
             self.wait_window(dialog)
         return getattr(dialog, "result", None)
 
+    def _show_document(self) -> None:
+        """The header: exactly which PDF this table edits (and its status)."""
+        try:
+            row = self.ctx.controller.active_document()
+        except ControllerError as exc:
+            self.document_label.configure(text="PDF: -")
+            self.document_detail.configure(text=str(exc))
+            return
+        if row is None:
+            self.document_label.configure(text="PDF: -")
+            self.document_detail.configure(text="PROJECT tabā atver JOB, tad PDF tabā izvēlies dokumentu")
+            return
+        self.document_label.configure(text=f"PDF: {row.name} | Lapas: {row.page_count}")
+        self.document_detail.configure(
+            text=f"{row.status_text} | {row.config_status} | rinda: {row.queue_status}"
+        )
+
+    def on_reconcile(self) -> None:
+        """RECONCILE the active document after its PDF page count changed.
+
+        Explicit by design: nothing in the pipeline rewrites a mapping on its own, so
+        the operator confirms and then sees exactly what happened.
+        """
+        controller = self.ctx.controller
+        try:
+            row = controller.active_document()
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        if row is None:
+            self.ctx.report("Nav izvēlēts PDF", error=True)
+            return
+        if row.missing:
+            self.ctx.report(f"{row.name}: PDF fails nav atrasts - RECONCILE nav iespējams", error=True)
+            return
+        if not messagebox.askyesno(
+            "RECONCILE",
+            f"Pārplānot {row.name}?\n\n"
+            f"config.json: {row.stored_page_count or 'nav'} lapas\n"
+            f"PDF tagad: {row.page_count} lapas\n\n"
+            "Esošās lapas saglabā template/output/stāvokli, jaunas kļūst WAITING, "
+            "noņemtās tiek arhivētas (netiek dzēstas).",
+            parent=self,
+        ):
+            return
+        try:
+            report = controller.reconcile_document(row.name)
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        added = ", ".join(str(page) for page in report.get("added") or []) or "-"
+        removed = ", ".join(str(page) for page in report.get("removed") or []) or "-"
+        restored = ", ".join(str(page) for page in report.get("restored") or []) or "-"
+        self.ctx.report(
+            f"RECONCILE {report.get('pdf')}: {report.get('stored')} -> {report.get('current')} lapas | "
+            f"pievienotas {added} | noņemtas {removed} | atjaunotas {restored}"
+        )
+        self.ctx.refresh()
+
     def _on_selection(self, _event: Any = None) -> None:
         rows = [row for row in self._rows if row.job_id in set(self.selected_job_ids())]
         if not rows:
@@ -348,6 +414,7 @@ class MappingTab(ttk.Frame):
 
     def refresh(self, *_args: Any) -> None:
         keep = set(self.tree.selection())  # an action must not lose the selection
+        self._show_document()
         try:
             rows = self.ctx.controller.mapping_rows()
         except ControllerError as exc:

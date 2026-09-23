@@ -5,6 +5,81 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
+## [0.5.0] - 2026-09-23
+
+Milestone 4: **multi PDF project queue**. One JOB now holds several PDFs, each with
+its own page plan, templates, outputs and persistent states, and the GUI grew the
+project level actions to drive them. `jsx/cleanup.jsx`, `jsx/worker.jsx` and the
+Python <-> JSX contract are untouched (config `version: 2` is a Python side format).
+
+### Added
+
+- `core/config.py` - **config version 2**: `{version, defaults, documents[]}`, one
+  block per PDF (`pdf`, `page_count`, `enabled`, `pages[]`, `removed_pages[]`).
+  `load_config` migrates a version 1 file **in memory**, so existing JOBs keep
+  working byte for byte; the file is rewritten as v2 on the next plan save.
+  New helpers: `new_project_config`, `new_document`, `document_entries`,
+  `enabled_document_entries`, `document_for`, `page_entries(config, pdf)`,
+  `all_page_entries`, `document_page_count`, `replace_document`,
+  `reconcile_document` (kept / restored / added / archived pages).
+- `core/naming.py` - `pdf_id_for` (stable, file name derived, never `hash()`),
+  `pdf_key_for` (case folded comparison key for duplicate document detection) and
+  `job_id_parts`; `job_id_for` is `<pdf_id>_p<page:03d>`, unique across documents.
+- `core/pagejob.py` - `DocumentPlan` / `ProjectPlan`, `plan_document` (status
+  `OK` / `NEW` / `CONFIG STALE` / `MISSING PDF` / `PLAN ERROR`, drift detected
+  without rewriting anything), `plan_project` (config order first, then the PDFs
+  found in `JOB/PDF`), `reconcile_plan` / `apply_reconcile` (explicit only) and
+  `document_plan_inputs` (one place that resolves a document's plan source).
+- `core/queue.py` - the queue is built for the whole project by default
+  (`build_queue(pdf=...)` narrows it to one document), `run_documents()` (RUN
+  CURRENT PDF), `duplicate_outputs()` + a collision guard that aborts a pass before
+  the first Illustrator call, per document counts/summaries, `document_progress()`
+  and a deterministic order (document order, then page ascending). `find()` is
+  document aware: a bare page number in a multi PDF JOB is reported as ambiguous.
+- `core/state.py` - `pdf_id` on every item (derived from the PDF path for old
+  files), `counts_of`, `document_summaries`, `StateDocument.items_of`,
+  `document_ids`, `candidates`.
+- `batch.py` - project scope by default, `--pdf NAME` narrows a build, a run or an
+  ID lookup, new `--reconcile` (with `--pdf`), PDF column in `--status`.
+- GUI: the PDF tab is now the JOB's **document list** (`USE / PDF / PAGES /
+  CONFIG STATUS / QUEUE STATUS`, with IZMANTOT, IESLĒGT/IZSLĒGT, RECONCILE,
+  PIEVIENOT PDF, ATJAUNOT), the MAPPING tab shows which PDF it edits
+  (`PDF: manualis.pdf | Lapas: 42`) and has its own RECONCILE PDF button, and the
+  RUN tab has RUN CURRENT PDF / RUN ALL ENABLED PDFs / CONTINUE PROJECT /
+  RETRY PROJECT ERRORS plus a per document progress list and a project summary
+  (`PDFs: 2 | Lapas kopā: 7`, `appendix.pdf - lapa 004 / 004`).
+- Tests: `tests/test_multi_pdf.py` (16) and `tests/test_gui_multi_pdf.py` (10):
+  two PDFs with the same page numbers, unique job ids, deterministic order, one
+  PDF error not stopping another, output collision detection (config + runtime),
+  v1 -> v2 migration, reopening a v1 JOB, state files without `pdf_id`, page count
+  drift, missing PDFs, RECONCILE (added / removed / restored / DONE preserved),
+  multi PDF continue and retry, project summary and current PDF filtering.
+
+### Changed
+
+- A document that is disabled, missing or unplannable has its queue items
+  **disabled** (never reset, never deleted); a document that was not planned in a
+  pass keeps its state untouched. State is only ever dropped by an explicit reset.
+- `--status`, `--dry-run` and the batch summary are project aware: PDFs, pages
+  total and one line per document.
+- The active document of the GUI is the one MAPPING edits; plan edits carry the
+  other documents over untouched (`replace_document`), so editing one PDF can never
+  drop another PDF's plan.
+- Project level runs (`RUN ALL ENABLED PDFs`, `CONTINUE PROJECT`,
+  `RETRY PROJECT ERRORS`) no longer require a readable active PDF: the queue skips
+  exactly the broken document and runs the rest.
+
+### Fixed
+
+- A document whose PDF was deleted showed up nowhere while its queue state still
+  existed; it is now listed as `MISSING PDF` with its queue status and stays
+  recoverable when the file comes back.
+- The MAPPING table could pick up a page number from another PDF through a bare
+  `find("14")`; lookups are now document scoped and ambiguous ids raise a clear
+  error.
+- `validate_config` no longer rejects a version 1 file (it migrates it) and now
+  also reports duplicate documents and one output name used by two documents.
+
 ## [0.4.0] - 2026-09-23
 
 Milestone 3: the **Tkinter GUI** (`python app.py`) as a thin presentation layer over

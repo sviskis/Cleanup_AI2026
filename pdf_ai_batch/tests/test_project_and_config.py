@@ -81,25 +81,49 @@ def test_config_round_trip_and_validation(job_folder):
 
 def test_validate_config_reports_real_problems(job_folder):
     document = {
-        "version": 99,
-        "pdf": "",
-        "page_count": 0,
+        "version": 2,
         "defaults": {"template": None, "layer": "", "clear_layer": True},
-        "pages": [
-            {"page": 1, "enabled": True, "template": "x.txt", "output": "a.ai"},
-            {"page": 1, "enabled": True, "template": None, "output": "a.ai"},
-            {"page": 5, "enabled": True, "template": None, "output": "b.pdf"},
+        "documents": [
+            {
+                "pdf": "",
+                "page_count": 0,
+                "enabled": True,
+                "pages": [
+                    {"page": 1, "enabled": True, "template": "x.txt", "output": "a.ai"},
+                    {"page": 1, "enabled": True, "template": None, "output": "a.ai"},
+                    {"page": 5, "enabled": True, "template": None, "output": "b.pdf"},
+                ],
+            }
         ],
     }
     problems = cfg.validate_config(document)
-    assert any("version" in problem for problem in problems)
-    assert any("pdf" in problem for problem in problems)
+    assert any("pdf ir tukšs" in problem for problem in problems)
     assert any("page_count" in problem for problem in problems)
     assert any("layer" in problem for problem in problems)
     assert any("parādās divreiz" in problem for problem in problems)
     assert any("pārsniedz" in problem for problem in problems)
     assert any("nav .ai/.ait" in problem for problem in problems)
     assert any("jābeidzas ar .ai" in problem for problem in problems)
+
+
+def test_validate_config_migrates_v1_and_reports_unknown_versions(job_folder):
+    legacy = {
+        "version": 1,
+        "pdf": "manual.pdf",
+        "page_count": 2,
+        "defaults": {"template": "MASTER_AI_TEMPLATE.ai", "layer": "ARTWORK"},
+        "pages": [{"page": 1, "enabled": True, "output": "manual__001.ai"}],
+    }
+    assert cfg.validate_config(legacy) == []
+    migrated, note = cfg.migrate_config(legacy)
+    assert migrated["version"] == cfg.CONFIG_VERSION
+    assert note
+    assert migrated["documents"][0]["pdf"] == "manual.pdf"
+    assert cfg.page_entries(migrated, "manual.pdf")[0]["output"] == "manual__001.ai"
+
+    unknown = {"version": 99, "documentses": []}
+    problems = cfg.validate_config(unknown)
+    assert any("nezināma config versija" in problem for problem in problems)
 
 
 def test_validate_config_detects_duplicate_outputs():

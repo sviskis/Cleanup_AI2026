@@ -1,27 +1,35 @@
-"""Batch queue CLI - the operator interface of milestone 2 (no GUI yet).
+"""Batch queue CLI - the operator interface (no GUI needed).
 
     python -m pdf_ai_batch.batch --job <JOB> --build --pages 1-4
     python -m pdf_ai_batch.batch --job <JOB> --run-all
+    python -m pdf_ai_batch.batch --job <JOB> --pdf appendix.pdf --run-all
     python -m pdf_ai_batch.batch --job <JOB> --continue
     python -m pdf_ai_batch.batch --job <JOB> --retry-errors
     python -m pdf_ai_batch.batch --job <JOB> --retry-interrupted
     python -m pdf_ai_batch.batch --job <JOB> --run-next
     python -m pdf_ai_batch.batch --job <JOB> --status
-    python -m pdf_ai_batch.batch --job <JOB> --reset 3
-    python -m pdf_ai_batch.batch --job <JOB> --skip mans_fails_p002
+    python -m pdf_ai_batch.batch --job <JOB> --pdf appendix.pdf --reconcile
+    python -m pdf_ai_batch.batch --job <JOB> --reset appendix_p003
+    python -m pdf_ai_batch.batch --job <JOB> --skip manualis_p002
 
 Action semantics (see pdf_ai_batch/core/queue.py for the full rules):
 
-    --build              plan the PDF pages and merge them into state.json
+    --build              plan the pages and merge them into state.json; without
+                         --pdf every configured PDF of the JOB is planned
     --run-all            rebuild the plan, then run all enabled WAITING/INTERRUPTED
+                         (with --pdf: only the pages of that PDF)
     --continue           resume after a restart (WAITING + INTERRUPTED, recovered
                          RUNNING items included); DONE/SKIPPED/ERROR stay as they are
-    --retry-errors       ERROR -> WAITING and run them
+    --retry-errors       ERROR -> WAITING and run them (every PDF of the JOB)
     --retry-interrupted  INTERRUPTED -> WAITING and run them
     --run-next           run exactly one runnable item
-    --status             print the PAGE / STATE / OUTPUT table, touch nothing
-    --skip ID            mark one item SKIPPED (see --skip for the accepted ids)
+    --reconcile          reconcile ONE PDF after its page count changed (--pdf required)
+    --status             print the PDF / PAGE / STATE / OUTPUT table, touch nothing
+    --skip ID            mark one item SKIPPED
     --reset ID           put one item back to WAITING (works on DONE too)
+
+Documents are planned and run in the order of `documents[]` in config.json, then by
+page number; `--pdf NAME` narrows a build, a run or an ID lookup to one document.
 
 Exit codes: 0 = no ERROR/INTERRUPTED left in the queue, 1 = at least one is left
 (also for `--status`), 2 = usage or setup problem.
@@ -38,6 +46,7 @@ from . import __version__, paths
 from .adapters.illustrator import IllustratorAdapter
 from .core import jsonio
 from .core import queue as queue_mod
+from .core.naming import pdf_id_for
 from .core.pagejob import PagePlanError
 from .core.pdf_info import PdfPageCountError
 from .core.project import JobProject, ProjectError
@@ -49,6 +58,7 @@ EXIT_USAGE = 2
 
 ACTION_FLAGS = (
     "build",
+    "reconcile",
     "status",
     "run_next",
     "run_all",
@@ -64,14 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
         description="Persistent batch queue: state.json in JOB/CONFIG, one Illustrator worker call per page.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "IDs for --skip/--reset: job_id (mans_fails_p003), page number (3 or 003)\n"
-            "or the output file name (mans_fails__003.ai).\n"
+            "IDs for --skip/--reset: job_id (manualis_p003, works across every PDF),\n"
+            "page number scoped with --pdf (--pdf manualis.pdf 3) or the output file\n"
+            "name (manualis__003.ai). Without --pdf a bare page number in a multi PDF\n"
+            "JOB is ambiguous and is reported as an error.\n"
         ),
     )
     parser.add_argument("--job", required=True, help="JOB folder (created when missing)")
 
     parser.add_argument("--build", action="store_true", help="plan the pages and write state.json")
-    parser.add_argument("--status", action="store_true", help="print the PAGE/STATE/OUTPUT table")
+    parser.add_argument("--reconcile", action="store_true", help="reconcile ONE PDF after a page count change (needs --pdf)")
+    parser.add_argument("--status", action="store_true", help="print the PDF/PAGE/STATE/OUTPUT table")
     parser.add_argument("--run-next", action="store_true", help="run one runnable item")
     parser.add_argument("--run-all", action="store_true", help="rebuild the plan and run the backlog")
     parser.add_argument("--continue", dest="continue_queue", action="store_true", help="resume: WAITING + INTERRUPTED")
@@ -80,7 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip", action="append", default=[], metavar="ID", help="mark one item SKIPPED (repeatable)")
     parser.add_argument("--reset", action="append", default=[], metavar="ID", help="put one item back to WAITING (repeatable)")
 
-    parser.add_argument("--pdf", help="PDF inside JOB/PDF (default: the first one)")
+    parser.add_argument(
+        "--pdf",
+        help="one document inside JOB/PDF (default: every configured document)",
+    )
     parser.add_argument("--pages", help='pages to plan, e.g. "1-3,5" (default: all)')
     parser.add_argument("--template", help="template file name in JOB/TEMPLATE (overrides the mapping)")
     parser.add_argument("--layer", help="target layer in the AI (default ARTWORK)")
@@ -181,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     # ---------------------------------------------------------------- state only
     for item_id in args.reset:
         try:
-            item = batch.reset_item(item_id)
+            item = batch.reset_item(item_id, pdf=args.pdf)
         except queue_mod.QueueError as exc:
             print(f"Kļūda: {exc}")
             exit_code = EXIT_USAGE
@@ -189,12 +205,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"RESET {item.job_id} -> WAITING")
     for item_id in args.skip:
         try:
-            item = batch.skip_item(item_id)
+            item = batch.skip_item(item_id, pdf=args.pdf)
         except queue_mod.QueueError as exc:
             print(f"Kļūda: {exc}")
             exit_code = EXIT_USAGE
             continue
         print(f"SKIP  {item.job_id}")
+
+    if args.reconcile:
+        if not args.pdf:
+            print("Kļūda: --reconcile prasa --pdf (vienam dokumentam)")
+            return EXIT_USAGE
+        try:
+            report = batch.reconcile_document(args.pdf)
+        except (PagePlanError, ProjectError, PdfPageCountError, OSError) as exc:
+            print(f"Kļūda: {exc}")
+            logger.error("reconcile neizdevās: %s", exc)
+            return EXIT_USAGE
+        print(
+            f"RECONCILE {report.get('pdf')}: stored {report.get('stored')} -> "
+            f"current {report.get('current')} | saglabātas {report.get('kept')} | "
+            f"pievienotas {report.get('added')} | noņemtas {report.get('removed')} | "
+            f"atjaunotas {report.get('restored')}"
+        )
+        print("")
 
     if args.build:
         try:
@@ -218,10 +252,14 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if run_actions:
         if args.dry_run:
+            runnable = batch.document.runnable()
+            if args.pdf:
+                wanted = pdf_id_for(args.pdf)
+                runnable = [item for item in runnable if item.document == wanted]
             print("--- dry-run: elementi, kas tiktu izpildīti ---")
-            for item in batch.document.runnable():
-                print(f"{item.page:03d} {item.state:<11} {item.output}")
-            print(f"Kopā: {len(batch.document.runnable())}")
+            for item in runnable:
+                print(f"{item.document:<16} {item.page:03d} {item.state:<11} {item.output}")
+            print(f"Kopā: {len(runnable)}")
             return EXIT_OK
 
         adapter = _make_adapter(args, logger)
@@ -239,11 +277,20 @@ def main(argv: list[str] | None = None) -> int:
                     print("Nav izpildāmu elementu")
                 summary = batch.summary(outcomes=[outcome] if outcome else [])
             elif name == "run_all":
-                summary = batch.run_all_enabled(
-                    progress=progress,
-                    rebuild=not args.no_build,
-                    build_kwargs=build_kwargs,
-                )
+                if args.pdf:
+                    # --pdf narrows the pass to one document (RUN CURRENT PDF)
+                    summary = batch.run_documents(
+                        [args.pdf],
+                        progress=progress,
+                        rebuild=not args.no_build,
+                        build_kwargs=build_kwargs,
+                    )
+                else:
+                    summary = batch.run_all_enabled(
+                        progress=progress,
+                        rebuild=not args.no_build,
+                        build_kwargs=build_kwargs,
+                    )
             elif name == "continue_queue":
                 summary = batch.continue_queue(
                     progress=progress, limit=args.max_items, build_kwargs=build_kwargs

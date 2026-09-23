@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -58,6 +58,7 @@ class MappingRow:
     attempts: int = 0
     error_type: str = ""
     error_message: str = ""
+    pdf_id: str = ""
 
     @property
     def page_label(self) -> str:
@@ -77,6 +78,22 @@ class MappingRow:
 
 
 @dataclass(frozen=True)
+class DocumentProgress:
+    """Cheap per document progress row (built from the queue state, no file reads)."""
+
+    pdf_id: str
+    name: str
+    page_count: int = 0
+    processed: int = 0
+    current_page: int = 0
+    counts: dict = field(default_factory=dict)
+
+    @property
+    def state_counts(self) -> dict:
+        return {name: int((self.counts or {}).get(name, 0)) for name in state.VALID_STATES}
+
+
+@dataclass(frozen=True)
 class PdfEntry:
     """What the PDF tab shows for the selected PDF."""
 
@@ -86,6 +103,9 @@ class PdfEntry:
     size_bytes: int
     config_status: str
     active: bool = False
+    pdf_id: str = ""
+    status: str = pagejob.DOC_STATUS_NEW
+    missing: bool = False
 
     @property
     def name(self) -> str:
@@ -97,6 +117,63 @@ class PdfEntry:
 
 
 @dataclass(frozen=True)
+class DocumentRow:
+    """One row of the PDF tab: USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS.
+
+    `status` is the document level state from `core/pagejob.py` (`OK`, `NEW`,
+    `CONFIG STALE`, `MISSING PDF`, `PLAN ERROR`) and is never a silent change: a
+    stale or missing document must be reconciled or restored explicitly.
+    """
+
+    pdf_id: str
+    name: str
+    path: Path
+    page_count: int = 0
+    stored_page_count: int = 0
+    count_method: str = ""
+    enabled: bool = True
+    status: str = pagejob.DOC_STATUS_NEW
+    missing: bool = False
+    source: str = pagejob.PLAN_SOURCE_AUTO
+    config_status: str = ""
+    queue_status: str = ""
+    counts: dict = field(default_factory=dict)
+    active: bool = False
+
+    @property
+    def use_label(self) -> str:
+        return "[x]" if self.enabled else "[ ]"
+
+    @property
+    def pages_label(self) -> str:
+        if self.missing:
+            return "---"
+        if self.stored_page_count and self.stored_page_count != self.page_count:
+            return f"{self.page_count} (stored {self.stored_page_count})"
+        return str(self.page_count)
+
+    @property
+    def status_text(self) -> str:
+        """CONFIG STATUS column: status plus where the plan comes from."""
+        if self.missing:
+            return pagejob.DOC_STATUS_MISSING
+        if self.status == pagejob.DOC_STATUS_STALE:
+            return (
+                f"{pagejob.DOC_STATUS_STALE} (stored: {self.stored_page_count}, "
+                f"current: {self.page_count})"
+            )
+        if self.status == pagejob.DOC_STATUS_OK:
+            return f"OK ({self.source})"
+        if self.status == pagejob.DOC_STATUS_PLAN_ERROR:
+            return "PLAN ERROR"
+        return f"nav config.json ({self.source})"
+
+    @property
+    def state_counts(self) -> dict:
+        return {name: int((self.counts or {}).get(name, 0)) for name in state.VALID_STATES}
+
+
+@dataclass(frozen=True)
 class ProgressSnapshot:
     """Everything the RUN tab displays, derived from the queue state only."""
 
@@ -105,6 +182,10 @@ class ProgressSnapshot:
     current_page: int = 0
     running_page: int = 0
     counts: dict[str, int] | None = None
+    pdfs: int = 0
+    document: str = ""
+    document_total: int = 0
+    documents: tuple = ()
 
     @property
     def fraction(self) -> float:
@@ -113,15 +194,19 @@ class ProgressSnapshot:
         return min(1.0, self.processed / self.total)
 
     def current_label(self) -> str:
-        if not self.total:
-            return "Page --- / ---"
+        """Project AND document progress, e.g. "appendix.pdf - lapa 014 / 018"."""
         page = self.running_page or self.current_page
+        if not self.document:
+            return f"Lapas --- / {self.total:03d}" if self.total else "Lapas --- / ---"
         page_label = f"{page:03d}" if page else "---"
-        return f"Page {page_label} / {self.total:03d}"
+        document_total = self.document_total or self.total
+        return f"{self.document} - lapa {page_label} / {document_total:03d}"
 
     def summary_lines(self) -> list[str]:
         counts = self.counts or {}
-        return [
+        lines = [
+            f"PDFs: {self.pdfs}",
+            f"Lapas kopā: {self.total} (apstrādātas {self.processed})",
             f"DONE: {counts.get(state.DONE, 0)}",
             f"WAITING: {counts.get(state.WAITING, 0)}",
             f"RUNNING: {counts.get(state.RUNNING, 0)}",
@@ -129,6 +214,20 @@ class ProgressSnapshot:
             f"SKIPPED: {counts.get(state.SKIPPED, 0)}",
             f"INTERRUPTED: {counts.get(state.INTERRUPTED, 0)}",
         ]
+        return lines
+
+    def document_lines(self) -> list[str]:
+        """One line per document (used by the RUN tab's project view)."""
+        lines: list[str] = []
+        for row in self.documents:
+            counts = getattr(row, "state_counts", {})
+            lines.append(
+                f"{row.name}: {counts.get(state.DONE, 0)}/{row.page_count} DONE"
+                f" | WAITING {counts.get(state.WAITING, 0)}"
+                f" | ERROR {counts.get(state.ERROR, 0)}"
+                f" | SKIPPED {counts.get(state.SKIPPED, 0)}"
+            )
+        return lines
 
 
 class ControllerError(RuntimeError):
@@ -207,6 +306,53 @@ class AppController:
         ]
         return [(name, str(path), path.is_dir()) for name, path in folders]
 
+    # ----------------------------------------------------------------- documents
+
+    def set_document_enabled(self, pdf: str | Path, enabled: bool) -> list[DocumentRow]:
+        """USE column of the PDF tab: the document switch in config.json.
+
+        A disabled document keeps its plan and its queue state; it is simply neither
+        planned for a run nor run (the queue disables its items, never resets them).
+        """
+        project = self._require_project()
+        name = Path(str(pdf)).name
+        config = cfg.load_config(project.config_path)
+        document = cfg.document_for(config, name)
+        if document is None:
+            document = cfg.new_document(name, 1, [], enabled=bool(enabled))
+        else:
+            document = dict(document)
+            document["enabled"] = bool(enabled)
+        cfg.save_config(project.config_path, cfg.replace_document(config, document))
+        self.log.info("%s dokumentu %s", "Ieslēdzu" if enabled else "Izslēdzu", name)
+        self._rebuild_queue()
+        return self.documents()
+
+    def reconcile_document(self, pdf: str | Path | None = None) -> dict:
+        """RECONCILE a document after its PDF page count changed.
+
+        Reaches `core.pagejob.apply_reconcile`: pages that are still there keep their
+        settings, new pages become WAITING with the defaults, removed pages are
+        archived in `removed_pages` (never silently deleted). Explicit only.
+        """
+        target = Path(str(pdf)).name if pdf else (self._active_pdf.name if self._active_pdf else None)
+        if not target:
+            raise ControllerError("Nav izvēlēts PDF")
+        try:
+            report = self.queue.reconcile_document(target)
+        except (ProjectError, PdfPageCountError, OSError) as exc:
+            raise ControllerError(str(exc)) from exc
+        self._rebuild_queue()
+        self.log.info(
+            "RECONCILE %s: %s -> %s | +%s | -%s",
+            target,
+            report.get("stored"),
+            report.get("current"),
+            report.get("added"),
+            report.get("removed"),
+        )
+        return report
+
     def add_pdf(self, sources: Sequence[str | Path]) -> tuple[list[str], list[str]]:
         """Copy PDFs into JOB/PDF. Returns (added, skipped)."""
         project = self._require_project()
@@ -254,52 +400,194 @@ class AppController:
     def list_pdfs(self) -> list[Path]:
         return self._require_project().find_pdfs()
 
-    def select_pdf(self, name_or_path: str | Path) -> PdfEntry:
-        """Make one PDF the active PDF of the GUI (MAPPING/RUN work on it)."""
+    def documents(self) -> list[DocumentRow]:
+        """Every document of the JOB: config order first, then unconfigured PDFs.
+
+        The list comes from `core.pagejob.plan_project`, so it shows the same status
+        the queue will use: `OK`, `NEW`, `CONFIG STALE`, `MISSING PDF`, `PLAN ERROR`.
+        """
         project = self._require_project()
+        config = cfg.load_config(project.config_path)
         try:
-            self._active_pdf = project.resolve_pdf(name_or_path)
-        except ProjectError as exc:
+            plan = pagejob.plan_project(project)
+        except (ProjectError, OSError) as exc:
             raise ControllerError(str(exc)) from exc
-        entry = self.pdf_entry()
-        self.log.info("Aktīvais PDF: %s (%s lapas)", entry.name, entry.page_count)
-        return entry
+
+        counts_by_document = self._queue_counts()
+        rows: list[DocumentRow] = []
+        for document in plan.documents:
+            counts = counts_by_document.get(
+                document.pdf_id, {name: 0 for name in state.VALID_STATES}
+            )
+            rows.append(
+                DocumentRow(
+                    pdf_id=document.pdf_id,
+                    name=document.pdf_name,
+                    path=document.pdf,
+                    page_count=document.current_page_count or document.page_count,
+                    stored_page_count=document.stored_page_count,
+                    count_method=document.count_method,
+                    enabled=document.enabled,
+                    status=document.status,
+                    missing=document.missing,
+                    source=document.source,
+                    config_status=self._document_config_status(config, document),
+                    queue_status=self._queue_status_text(counts),
+                    counts=counts,
+                    active=self._is_active(document.pdf_name),
+                )
+            )
+
+        # A document that only survives in state.json (its PDF was deleted and it was
+        # never configured) must stay visible: MISSING PDF with its queue status.
+        known = {row.pdf_id for row in rows}
+        for item in self._queue.document.items if self._queue is not None else []:
+            if item.document in known:
+                continue
+            known.add(item.document)
+            counts = counts_by_document.get(item.document, {name: 0 for name in state.VALID_STATES})
+            rows.append(
+                DocumentRow(
+                    pdf_id=item.document,
+                    name=item.pdf_name,
+                    path=project.pdf_dir / item.pdf_name,
+                    page_count=0,
+                    stored_page_count=0,
+                    count_method="",
+                    enabled=False,
+                    status=pagejob.DOC_STATUS_MISSING,
+                    missing=True,
+                    source="",
+                    config_status="PDF nav atrasts - plāns saglabāts",
+                    queue_status=self._queue_status_text(counts),
+                    counts=counts,
+                    active=self._is_active(item.pdf_name),
+                )
+            )
+        return rows
+
+    def document_row(self, pdf: str | Path) -> DocumentRow | None:
+        """The PDF tab row of one document (by name, path or pdf_id)."""
+        wanted_name = Path(str(pdf)).name.lower()
+        wanted_id = str(pdf)
+        for row in self.documents():
+            if row.name.lower() == wanted_name or row.pdf_id == wanted_id:
+                return row
+        return None
+
+    def active_document(self) -> DocumentRow | None:
+        """The row of the active document (what MAPPING shows)."""
+        if self._active_pdf is None:
+            return None
+        return self.document_row(self._active_pdf.name)
+
+    @property
+    def active_pdf_id(self) -> str:
+        return self._active_pdf.stem if self._active_pdf else ""
+
+    def select_document(self, name_or_id: str | Path) -> DocumentRow:
+        """Make one document active (MAPPING edits, RUN CURRENT PDF)."""
+        project = self._require_project()
+        candidate = project.pdf_dir / Path(str(name_or_id)).name
+        if not candidate.is_file():
+            for row in self.documents():
+                if row.pdf_id == str(name_or_id) or row.name.lower() == Path(str(name_or_id)).name.lower():
+                    candidate = row.path
+                    break
+        if not candidate.is_file():
+            raise ControllerError(f"PDF nav atrasts: {name_or_id}")
+        self._active_pdf = candidate
+        row = self.document_row(candidate.name)
+        assert row is not None  # just resolved from the same folder
+        self.log.info("Aktīvais dokuments: %s (%s lapas, %s)", row.name, row.page_count, row.status)
+        return row
+
+    def select_pdf(self, name_or_path: str | Path) -> PdfEntry:
+        """Backwards compatible alias: select the document, return its plan entry."""
+        self.select_document(name_or_path)
+        return self.pdf_entry()
 
     @property
     def active_pdf(self) -> Path | None:
         return self._active_pdf
 
     def pdf_entry(self) -> PdfEntry:
-        """Page count (PyMuPDF, pypdf fallback), size and config status."""
+        """Planning info of the ACTIVE document (page count, size, config status)."""
         pdf = self._require_pdf()
-        try:
-            page_count, method = count_pages(pdf)
-        except PdfPageCountError as exc:
-            raise ControllerError(str(exc)) from exc
+        row = self.document_row(pdf.name)
+        page_count = row.page_count if row else 0
+        method = row.count_method if row else ""
+        if not page_count:
+            try:
+                page_count, method = count_pages(pdf)
+            except PdfPageCountError as exc:
+                raise ControllerError(str(exc)) from exc
         return PdfEntry(
             path=pdf,
             page_count=page_count,
             count_method=method,
             size_bytes=pdf.stat().st_size,
-            config_status=self._config_status(pdf),
+            config_status=row.config_status if row else "",
             active=True,
+            pdf_id=row.pdf_id if row else pdf.stem,
+            status=row.status if row else pagejob.DOC_STATUS_NEW,
+            missing=row.missing if row else False,
         )
 
-    def _config_status(self, pdf: Path) -> str:
-        config = cfg.load_config(self._require_project().config_path)
+    def _is_active(self, name: str) -> bool:
+        return self._active_pdf is not None and name.lower() == self._active_pdf.name.lower()
+
+    def _queue_counts(self) -> dict[str, dict]:
+        """Per document state counts of the queue (empty when nothing is built)."""
+        counts: dict[str, dict] = {}
+        for item in self._queue.document.items if self._queue is not None else []:
+            per_document = counts.setdefault(item.document, {name: 0 for name in state.VALID_STATES})
+            per_document[item.state] = per_document.get(item.state, 0) + 1
+        return counts
+
+    @staticmethod
+    def _queue_status_text(counts: dict) -> str:
+        """QUEUE STATUS column: what the queue did with this document so far."""
+        total = sum(int(value) for value in (counts or {}).values())
+        if not total:
+            return "nav rindā"
+        parts = [
+            f"{name} {int((counts or {}).get(name, 0))}"
+            for name in state.VALID_STATES
+            if int((counts or {}).get(name, 0))
+        ]
+        return " | ".join(parts)
+
+    def _document_config_status(self, config: dict, document: pagejob.DocumentPlan) -> str:
+        """CONFIG STATUS column: config validity plus drift, per document."""
+        if document.missing:
+            return "PDF nav atrasts - plāns saglabāts"
         if not config:
             return "nav config.json (automātiskais plāns)"
         problems = cfg.validate_config(config)
         if problems:
             return "config.json nav derīgs: " + "; ".join(problems[:3])
-        if str(config.get("pdf") or "") != pdf.name:
-            return f"config.json apraksta citu PDF ({config.get('pdf')})"
-        pages = len(cfg.page_entries(config))
-        enabled = len(cfg.enabled_page_entries(config))
+        block = cfg.document_for(config, document.pdf_name)
+        if block is None:
+            return "dokumenta nav config.json (automātiskais plāns)"
+        if document.stale:
+            return (
+                f"CONFIG STALE: stored {document.stored_page_count}, "
+                f"current {document.current_page_count}"
+            )
+        pages = len(cfg.page_entries(config, document.pdf_name))
+        enabled = len(cfg.enabled_page_entries(config, document.pdf_name))
         return f"config.json: {pages} lapas, iespējotas {enabled}"
 
     def _active_name(self) -> str | None:
         return self._active_pdf.name if self._active_pdf else None
+
+    def _rebuild_queue(self) -> None:
+        """Refresh the queue plan of the whole project (states are preserved)."""
+        try:
+            self.queue.build_queue()
+        except Exception as exc:  # noqa: BLE001 - an incomplete job must not crash the GUI
+            self.log.warning("Nevar pārbūvēt rindu: %s", exc)
 
     # ------------------------------------------------------------------ helpers
 
@@ -331,6 +619,21 @@ class AppController:
                 self.log.warning("state.json: %s", problem)
         return self._queue
 
+    def ensure_queue_built(self) -> list[state.QueueItem]:
+        """Make sure the JOB's queue exists (the GUI calls this on open / refresh).
+
+        `BatchQueue.ensure_built` only builds when state.json holds no item yet, so
+        this never disturbs a queue that already has states. Without it the PDF tab
+        could not show a QUEUE STATUS and the run label would not know the document.
+        """
+        if self._project is None:
+            return []
+        try:
+            return self.queue.ensure_built()
+        except Exception as exc:  # noqa: BLE001 - an incomplete job must not crash the GUI
+            self.log.warning("Nevar izveidot rindu: %s", exc)
+            return []
+
     def refresh(self) -> list[str]:
         """Re-read state.json (another process may have written it)."""
         recovered: list[str] = []
@@ -348,10 +651,13 @@ class AppController:
     # ------------------------------------------------------------------ mapping
 
     def mapping_rows(self) -> list[MappingRow]:
-        """The MAPPING table: the page plan (config.json wins) plus queue state."""
+        """The MAPPING table of the ACTIVE document: plan + queue state.
+
+        Edits always affect that one PDF; other documents are not touched.
+        """
         project = self._require_project()
         try:
-            plan = pagejob.plan_pages(project, pdf=self._active_name(), pages=None)
+            plan = pagejob.plan_document(project, self._require_pdf())
         except Exception as exc:  # noqa: BLE001 - an incomplete job shows a message
             raise ControllerError(str(exc)) from exc
 
@@ -373,6 +679,7 @@ class AppController:
                     attempts=item.attempts if item is not None else 0,
                     error_type=item.error_type if item is not None else "",
                     error_message=item.error_message if item is not None else "",
+                    pdf_id=job.pdf_id or self.active_pdf_id,
                 )
             )
         return rows
@@ -409,7 +716,10 @@ class AppController:
         planned, defaults, _fallback = build_page_plan(pdf, page_count, project.template_dir)
 
         previous = cfg.load_config(project.config_path)
-        by_page = {int(entry.get("page", 0)): entry for entry in cfg.page_entries(previous)}
+        by_page = {
+            int(entry.get("page", 0)): entry
+            for entry in cfg.page_entries(previous, pdf.name)
+        }
         for entry in planned:
             old = by_page.get(int(entry["page"]))
             if not old:
@@ -418,10 +728,11 @@ class AppController:
             entry["enabled"] = bool(old.get("enabled", True))
             entry["output"] = old.get("output") or entry["output"]
 
-        document = cfg.new_config(pdf.name, page_count, planned, defaults)
+        defaults = dict(defaults)
         if (previous.get("defaults") or {}).get("template"):
-            document["defaults"]["template"] = previous["defaults"]["template"]
-        self._write_config(document)
+            defaults["template"] = previous["defaults"]["template"]
+        document = cfg.new_document(pdf.name, page_count, planned)
+        self._write_config(cfg.replace_document(previous, document))
         self.log.info("Automātiskā template piešķire: %s lapas", page_count)
         return self.mapping_rows()
 
@@ -436,27 +747,62 @@ class AppController:
     # ----------------------------------------------------------- config writing
 
     def _ensure_config(self) -> dict:
-        """Load config.json for the active PDF, or create it from the plan."""
+        """The project config with a valid plan for the ACTIVE document.
+
+        Other documents are carried over untouched (`documents[]` keeps its order), so
+        editing one PDF's mapping can never drop another PDF's plan.
+        """
         project = self._require_project()
         pdf = self._require_pdf()
         config = cfg.load_config(project.config_path)
-        if config and not cfg.validate_config(config) and str(config.get("pdf") or "") == pdf.name:
+        problems = cfg.validate_config(config) if config else ["nav config.json"]
+        document = cfg.document_for(config, pdf.name)
+        if (
+            config
+            and not problems
+            and document is not None
+            and cfg.page_entries(config, pdf.name)
+        ):
             return config
 
         try:
             page_count, _method = count_pages(pdf)
         except PdfPageCountError as exc:
             raise ControllerError(str(exc)) from exc
-        pages, defaults, _fallback = build_page_plan(pdf, page_count, project.template_dir)
+        pages, plan_defaults, _fallback = build_page_plan(pdf, page_count, project.template_dir)
+        if document is not None and cfg.page_entries(config, pdf.name):
+            current = {
+                int(entry.get("page", 0)): entry
+                for entry in cfg.page_entries(config, pdf.name)
+            }
+            for entry in pages:
+                old = current.get(int(entry["page"]))
+                if not old:
+                    continue
+                entry["layer"] = old.get("layer") or entry["layer"]
+                entry["enabled"] = bool(old.get("enabled", True))
+                entry["output"] = old.get("output") or entry["output"]
+                entry["template"] = old.get("template")
         self.log.info("Izveidoju config.json priekš %s (%s lapas)", pdf.name, page_count)
-        return cfg.new_config(pdf.name, page_count, pages, defaults)
+        fresh = cfg.new_document(
+            pdf.name,
+            page_count,
+            pages,
+            enabled=bool((document or {}).get("enabled", True)),
+        )
+        defaults = dict(plan_defaults)
+        if (config.get("defaults") or {}).get("template"):
+            defaults["template"] = config["defaults"]["template"]
+        merged = cfg.replace_document(config, fresh)
+        merged["defaults"] = cfg.normalize_defaults(defaults)
+        return merged
 
     def _set_pages(self, pages: Iterable[int], changes: dict) -> dict:
         wanted = {int(page) for page in pages}
         if not wanted:
             raise ControllerError("Nav atlasīta neviena lapa")
         config = self._ensure_config()
-        for entry in cfg.page_entries(config):
+        for entry in cfg.page_entries(config, self._active_name()):
             if int(entry.get("page", 0)) in wanted:
                 entry.update(changes)
         self._write_config(config)
@@ -468,7 +814,7 @@ class AppController:
         if problems:
             raise ControllerError("Nederīgs config.json: " + "; ".join(problems[:5]))
         cfg.save_config(self._require_project().config_path, config)
-        self.queue.build_queue(pdf=self._active_name())
+        self.queue.build_queue()
 
     # --------------------------------------------------------------- validation
 
@@ -509,17 +855,33 @@ class AppController:
             return [validation.CheckResult("JOB mape", False, "nav atvērts neviens JOB")]
 
         checks = [validation.CheckResult("JOB mape", project.root.is_dir(), str(project.root))]
+        # A problem with the ACTIVE document is only a hard failure when no other
+        # document could run: one broken PDF must never block the rest of the JOB.
+        alternatives = [
+            path for path in project.find_pdfs() if self._active_pdf is None or path != self._active_pdf
+        ]
+        soft = bool(alternatives)
         if self._active_pdf is None:
             checks.append(validation.CheckResult("PDF fails", False, "nav izvēlēts PDF"))
+            checks.extend(self._document_checks())
             return checks
         if not self._active_pdf.is_file():
-            checks.append(validation.CheckResult("PDF fails", False, f"nav atrasts: {self._active_pdf}"))
+            checks.append(
+                validation.CheckResult(
+                    "PDF fails",
+                    not soft,
+                    f"nav atrasts: {self._active_pdf.name}",
+                    warning=soft,
+                )
+            )
+            checks.extend(self._document_checks())
             return checks
 
         try:
             entry = self.pdf_entry()
         except ControllerError as exc:
-            checks.append(validation.CheckResult("PDF lapas", False, str(exc)))
+            checks.append(validation.CheckResult("PDF lapas", not soft, str(exc), warning=soft))
+            checks.extend(self._document_checks())
             return checks
         checks.append(validation.CheckResult("PDF fails", True, str(self._active_pdf)))
         checks.append(
@@ -565,6 +927,58 @@ class AppController:
             checks.append(
                 validation.CheckResult("config.json", True, "nav (izmanto automātisko plānu)", warning=True)
             )
+
+        checks.extend(self._document_checks())
+        return checks
+
+    def _document_checks(self) -> list[validation.CheckResult]:
+        """Project level checks: one per document plus the queue collision guard.
+
+        A missing or drifted document is a **warning**, never a hard failure: the spec
+        is explicit that one broken PDF must not block the others (RUN ALL skips it,
+        RUN CURRENT PDF still works). Only a real output collision fails, because the
+        queue would refuse the pass anyway.
+        """
+        checks: list[validation.CheckResult] = []
+        try:
+            rows = self.documents()
+        except ControllerError as exc:
+            return [validation.CheckResult("Dokumenti", False, str(exc))]
+
+        missing = [row.name for row in rows if row.missing]
+        stale = [row.name for row in rows if row.status == pagejob.DOC_STATUS_STALE]
+        failed = [row.name for row in rows if row.status == pagejob.DOC_STATUS_PLAN_ERROR]
+        active = next((row for row in rows if row.active), None)
+
+        detail = f"{len(rows)} PDF"
+        if active is not None:
+            detail += f" | aktīvais: {active.name} - {active.status_text}"
+        if stale:
+            detail += " | CONFIG STALE: " + ", ".join(stale)
+        if missing:
+            detail += " | MISSING PDF: " + ", ".join(missing)
+        checks.append(
+            validation.CheckResult(
+                "Dokumenti",
+                not failed,
+                detail,
+                warning=bool(stale or missing) and not failed,
+            )
+        )
+
+        if self._queue is not None:
+            collisions = self._queue.duplicate_outputs()
+            if collisions:
+                name, ids = next(iter(sorted(collisions.items())))
+                checks.append(
+                    validation.CheckResult(
+                        "Output dublikāti",
+                        False,
+                        f"{name}: {', '.join(ids)} (divi dokumenti rakstītu vienu failu)",
+                    )
+                )
+            else:
+                checks.append(validation.CheckResult("Output dublikāti", True, "nav"))
         return checks
 
     # -------------------------------------------------------------- illustrator
@@ -617,10 +1031,22 @@ class AppController:
 
     # ------------------------------------------------------------------ running
 
-    def _run_action(self, action: Callable[..., BatchSummary], *, progress=None) -> BatchSummary:
-        """Every run goes through the proven queue + adapter path."""
+    def _run_action(
+        self,
+        action: Callable[..., BatchSummary],
+        *,
+        progress=None,
+        require_pdf: bool = True,
+    ) -> BatchSummary:
+        """Every run goes through the proven queue + adapter path.
+
+        `require_pdf=False` is for the PROJECT level actions: a deleted or unreadable
+        active PDF must never stop `RUN ALL ENABLED PDFs`, `CONTINUE PROJECT` or the
+        retries - the queue skips exactly that document and runs the rest.
+        """
         self._require_project()
-        self._require_pdf()
+        if require_pdf:
+            self._require_pdf()
         queue = self.queue
         queue.adapter = self.adapter
         if not self.adapter.ensure_app():
@@ -630,8 +1056,24 @@ class AppController:
         return summary
 
     def _plan_kwargs(self) -> dict:
-        """The plan arguments every run uses (active PDF + overwrite choice)."""
-        return {"pdf": self._active_name(), "overwrite": self.overwrite_outputs}
+        """The plan arguments every run uses.
+
+        No `pdf` key on purpose: a run refreshes the plan of the WHOLE project, so
+        every document of the JOB is present in the queue (and stays WAITING when the
+        run only covers one PDF). `overwrite` comes from the RUN tab checkbox.
+        """
+        return {"overwrite": self.overwrite_outputs}
+
+    def run_document(self, pdf: str | Path | None = None, *, progress=None) -> BatchSummary:
+        """RUN CURRENT PDF: only the pages of that document are run."""
+        target = pdf or self._require_pdf().name
+        queue = self.queue
+        return self._run_action(
+            lambda progress: queue.run_documents(
+                [target], progress=progress, rebuild=True, build_kwargs=self._plan_kwargs()
+            ),
+            progress=progress,
+        )
 
     def run_selected(self, item_ids: Iterable[str | int], *, progress=None) -> BatchSummary:
         """RUN SELECTED: only WAITING/INTERRUPTED rows of the selection are run."""
@@ -646,43 +1088,58 @@ class AppController:
             raise ControllerError(str(exc)) from exc
 
     def run_all_enabled(self, *, progress=None) -> BatchSummary:
-        """RUN ALL ENABLED: refresh the plan, then run the whole backlog."""
+        """RUN ALL ENABLED PDFs: refresh the plan, then run the whole project backlog.
+
+        Documents that are disabled, missing or unplannable are skipped by the queue
+        (`enabled=False` on their items); a failure in one document never stops
+        another one unless it is a global Illustrator/COM failure.
+        """
         queue = self.queue
         return self._run_action(
             lambda progress: queue.run_all_enabled(
                 progress=progress, build_kwargs=self._plan_kwargs()
             ),
             progress=progress,
+            require_pdf=False,
         )
 
     def continue_queue(self, *, progress=None) -> BatchSummary:
-        """CONTINUE: WAITING + INTERRUPTED (a recovered RUNNING item included)."""
+        """CONTINUE PROJECT: WAITING + INTERRUPTED (a recovered RUNNING item included)."""
         queue = self.queue
         return self._run_action(
             lambda progress: queue.continue_queue(
                 progress=progress, build_kwargs=self._plan_kwargs()
             ),
             progress=progress,
+            require_pdf=False,
         )
 
     def retry_errors(self, *, progress=None) -> BatchSummary:
+        """RETRY PROJECT ERRORS: ERROR -> WAITING in every document of the JOB."""
         queue = self.queue
         return self._run_action(
             lambda progress: (queue.retry_errors(run=True, progress=progress).summary or queue.summary()),
             progress=progress,
+            require_pdf=False,
         )
 
     def retry_interrupted(self, *, progress=None) -> BatchSummary:
+        """RETRY INTERRUPTED: INTERRUPTED -> WAITING in every document, then run."""
         queue = self.queue
         return self._run_action(
             lambda progress: (queue.retry_interrupted(run=True, progress=progress).summary or queue.summary()),
             progress=progress,
+            require_pdf=False,
         )
 
     # ------------------------------------------------------------------ progress
 
     def progress(self) -> ProgressSnapshot:
-        """Everything the RUN tab shows, derived from the queue state only."""
+        """Everything the RUN tab shows, derived from the queue state only (cheap).
+
+        No PDF or config reads here: the RUN tab is polled while a batch runs, so it
+        only reads `state.json` (through the open queue) and groups it per document.
+        """
         counts = self.queue_summary()
         items = self._queue.document.items if self._queue is not None else []
         total = len(items)
@@ -693,16 +1150,41 @@ class AppController:
             except ControllerError:
                 total = 0
 
+        rows = self._queue.document_progress() if self._queue is not None else []
+        documents = tuple(
+            DocumentProgress(
+                pdf_id=row.get("pdf_id", ""),
+                name=row.get("pdf", ""),
+                page_count=row.get("pages", 0),
+                processed=row.get("processed", 0),
+                current_page=row.get("current_page", 0),
+                counts=row.get("counts") or {},
+            )
+            for row in rows
+        )
+
         running = next((item for item in items if item.state == state.RUNNING), None)
-        processed_pages = [
-            item.page for item in items if item.state in (state.DONE, state.SKIPPED, state.ERROR)
-        ]
+        current = None
+        if running is not None:
+            current = next((doc for doc in documents if doc.pdf_id == running.document), None)
+        if current is None:
+            current = next((doc for doc in documents if doc.pdf_id == self.active_pdf_id), None)
+        if current is None:
+            current = next(
+                (doc for doc in documents if doc.processed),
+                documents[0] if documents else None,
+            )
+
         return ProgressSnapshot(
             total=total,
             processed=counts[state.DONE] + counts[state.SKIPPED] + counts[state.ERROR],
-            current_page=max(processed_pages) if processed_pages else 0,
+            current_page=current.current_page if current else 0,
             running_page=running.page if running else 0,
             counts=counts,
+            pdfs=counts.get("pdfs", len(documents)),
+            document=current.name if current else "",
+            document_total=current.page_count if current else 0,
+            documents=documents,
         )
 
     def has_running_items(self) -> bool:

@@ -42,7 +42,7 @@ from typing import Any, Iterable
 
 from . import jsonio
 from .contract import LAYER_DEFAULT, TEMPLATE_MODE_COPY, build_request, is_absolute_path
-from .naming import job_id_for
+from .naming import job_id_for, pdf_id_for
 
 STATE_VERSION = 1
 STATE_FILE_NAME = "state.json"
@@ -63,6 +63,7 @@ RETRY_ERROR_STATES = (ERROR,)
 RETRY_INTERRUPTED_STATES = (INTERRUPTED,)
 
 ITEM_FIELDS = (
+    "pdf_id",
     "job_id",
     "page",
     "state",
@@ -107,6 +108,7 @@ class QueueItem:
     pdf: str
     template: str
     output: str
+    pdf_id: str = ""
     layer: str = LAYER_DEFAULT
     template_mode: str = TEMPLATE_MODE_COPY
     clear_layer: bool = True
@@ -127,6 +129,15 @@ class QueueItem:
     @property
     def pdf_name(self) -> str:
         return Path(self.pdf).name
+
+    @property
+    def document(self) -> str:
+        """The document this item belongs to: `pdf_id`, or derived from the path.
+
+        Old state files (milestone 2/3) have no `pdf_id`; deriving it from the file
+        name keeps them readable and produces the same id `job_id_for` would.
+        """
+        return self.pdf_id or pdf_id_for(self.pdf)
 
     @property
     def runnable(self) -> bool:
@@ -187,6 +198,7 @@ class QueueItem:
             pdf=str(data.get("pdf") or ""),
             template=str(data.get("template") or ""),
             output=str(data.get("output") or ""),
+            pdf_id=str(data.get("pdf_id") or ""),
             layer=str(data.get("layer") or LAYER_DEFAULT),
             template_mode=str(data.get("template_mode") or TEMPLATE_MODE_COPY),
             clear_layer=bool(data.get("clear_layer", True)),
@@ -207,6 +219,10 @@ class QueueItem:
             problems.append("elements bez job_id")
         if item.page < 1:
             problems.append(f"{item.job_id or '?'}: page < 1")
+        if not item.pdf_id:
+            # milestone 2/3 state files have no pdf_id: derive it silently from the
+            # PDF path so the item can be ordered and grouped like a new one
+            item = replace(item, pdf_id=pdf_id_for(item.pdf))
         for name in ("pdf", "template", "output"):
             value = getattr(item, name)
             if not value:
@@ -236,30 +252,28 @@ class StateDocument:
                 return index
         return -1
 
-    def find(self, item_id: str | int) -> QueueItem | None:
-        """Find one item by job_id, page number or output file name."""
+    def find(self, item_id: str | int, *, pdf: str | Path | None = None) -> QueueItem | None:
+        """Find one item by job_id, page number or output file name.
+
+        `pdf` restricts the lookup to one document. Without it a bare page number in a
+        multi PDF JOB is ambiguous, so `None` is returned instead of guessing a
+        document - callers report that (see `BatchQueue.find`).
+        """
         if item_id is None:
             return None
-        if isinstance(item_id, int):
-            text = str(item_id)
-        else:
-            text = str(item_id).strip()
-
-        for item in self.items:
-            if item.job_id == text:
-                return item
+        text = str(item_id).strip() if not isinstance(item_id, int) else str(item_id)
         lowered = text.lower()
-        for item in self.items:
-            if item.job_id.lower() == lowered:
-                return item
-        for item in self.items:
-            if Path(item.output).name.lower() == lowered:
-                return item
-        if text.isdigit():
-            page = int(text)
-            for item in self.items:
-                if item.page == page:
-                    return item
+
+        scope = self.items if pdf is None else self.items_of(pdf)
+        matches = [item for item in scope if item.job_id == text]
+        if not matches:
+            matches = [item for item in scope if item.job_id.lower() == lowered]
+        if not matches:
+            matches = [item for item in scope if Path(item.output).name.lower() == lowered]
+        if not matches and text.isdigit():
+            matches = [item for item in scope if item.page == int(text)]
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     def replace_item(self, item: QueueItem) -> None:
@@ -269,6 +283,37 @@ class StateDocument:
             self.items.append(item)
             return
         self.items[index] = item
+
+    # --------------------------------------------------------------- documents
+
+    def candidates(self, item_id: str | int) -> list[QueueItem]:
+        """Every item that matches (used to report an ambiguous lookup)."""
+        if item_id is None:
+            return []
+        text = str(item_id).strip()
+        lowered = text.lower()
+        matches = [item for item in self.items if item.job_id.lower() == lowered]
+        if not matches and text.isdigit():
+            matches = [item for item in self.items if item.page == int(text)]
+        return matches
+
+    def items_of(self, pdf: str | Path) -> list[QueueItem]:
+        """Items of one document, matched by pdf_id, file name or path."""
+        wanted_id = pdf_id_for(pdf)
+        wanted_name = Path(str(pdf)).name.lower()
+        return [
+            item
+            for item in self.items
+            if item.document == wanted_id or item.pdf_name.lower() == wanted_name
+        ]
+
+    def document_ids(self) -> list[str]:
+        """Unique document ids, in queue order."""
+        ordered: list[str] = []
+        for item in self.items:
+            if item.document not in ordered:
+                ordered.append(item.document)
+        return ordered
 
     # ----------------------------------------------------------------- content
 
@@ -492,17 +537,51 @@ def recover_running(
     return recovered
 
 
-def summary(document: StateDocument) -> dict[str, int]:
-    """Counts per state plus total/enabled/runnable (used by the CLI and the GUI)."""
+def counts_of(items: Iterable[QueueItem]) -> dict[str, int]:
+    """Counts of any set of items: every state plus total/enabled/runnable/pdfs."""
     counts: dict[str, int] = {name: 0 for name in VALID_STATES}
-    for item in document.items:
+    documents: set[str] = set()
+    for item in items:
         counts[item.state] = counts.get(item.state, 0) + 1
-    return {
-        "total": len(document.items),
-        "enabled": sum(1 for item in document.items if item.enabled),
-        "runnable": sum(1 for item in document.items if item.runnable),
-        **counts,
-    }
+        documents.add(item.document)
+    counts["total"] = sum(counts[name] for name in VALID_STATES)
+    counts["enabled"] = sum(1 for item in items if item.enabled)
+    counts["runnable"] = sum(1 for item in items if item.runnable)
+    counts["pdfs"] = len(documents)
+    return counts
+
+
+def summary(document: StateDocument) -> dict[str, int]:
+    """Counts per state plus total/enabled/runnable/pdfs (CLI and GUI use this)."""
+    return counts_of(document.items)
+
+
+def document_summaries(document: StateDocument) -> list[dict[str, Any]]:
+    """One progress record per document, in queue order.
+
+    Each record: pdf_id, pdf (file name), pdf_path, pages (items), page_count,
+    processed, current_page, running_page and the per state counts.
+    """
+    rows: list[dict[str, Any]] = []
+    for pdf_id in document.document_ids():
+        items = [item for item in document.items if item.document == pdf_id]
+        counts = counts_of(items)
+        processed_pages = [item.page for item in items if item.state in (DONE, SKIPPED, ERROR)]
+        running = next((item for item in items if item.state == RUNNING), None)
+        rows.append(
+            {
+                "pdf_id": pdf_id,
+                "pdf": items[0].pdf_name,
+                "pdf_path": items[0].pdf,
+                "pages": len(items),
+                "page_count": max((item.page for item in items), default=0),
+                "processed": counts[DONE] + counts[SKIPPED] + counts[ERROR],
+                "current_page": max(processed_pages) if processed_pages else 0,
+                "running_page": running.page if running else 0,
+                "counts": counts,
+            }
+        )
+    return rows
 
 
 def new_item(
@@ -512,6 +591,7 @@ def new_item(
     pdf: str,
     template: str,
     output: str,
+    pdf_id: str = "",
     layer: str = LAYER_DEFAULT,
     template_mode: str = TEMPLATE_MODE_COPY,
     clear_layer: bool = True,
@@ -528,6 +608,7 @@ def new_item(
         pdf=str(pdf),
         template=str(template),
         output=str(output),
+        pdf_id=pdf_id or pdf_id_for(pdf),
         layer=layer or LAYER_DEFAULT,
         template_mode=template_mode,
         clear_layer=bool(clear_layer),

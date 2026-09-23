@@ -34,7 +34,12 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
   exists (enforced by `core/pagejob.output_ready` for both `run_one` and the queue).
 - [x] Batch summary at the end: DONE / SKIPPED / ERROR / INTERRUPTED counts plus
   aggregated statistics, written to the batch log.
-- [ ] Multi PDF queue in one run (each PDF with its own page plan).
+- [x] Multi PDF queue in one run (each PDF with its own page plan).
+      Done: config v2 `documents[]`, `pdf_id` + page identity, per document plans
+      and states, `plan_project` / `run_documents`, cross document output collision
+      guard, explicit RECONCILE, MISSING PDF handling, PDF/MAPPING/RUN GUI updates
+      and a real two PDF Illustrator acceptance (`temp/gui_acceptance_m4.txt`).
+      See `docs/QUEUE_STATE.md` and `docs/GUI.md`.
 - [ ] "Stop after the current page" (now: close the GUI and press CONTINUE, or
   Ctrl+C leaves a recoverable `RUNNING` item for `--continue`).
 - [ ] Remember the last JOB (and its active PDF) between GUI sessions.

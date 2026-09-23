@@ -7,6 +7,21 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
 
 - **One cleanup engine.** It lives in `jsx/cleanup.jsx` and nowhere else. Never
   copy the cleanup algorithm into another file.
+- **One plan per document, identity is never the page number alone.** A queue item
+  is `pdf_id` + page (`manualis_p001`), where `pdf_id` comes from `naming.pdf_id_for`
+  (the file name) - never `hash()`, never a bare page. `config.json` version 2 holds
+  `documents[]` with one block per PDF; a version 1 file is migrated in memory by
+  `load_config`, so existing JOBs keep working.
+- **The queue order is data, not opinion:** document order from `documents[]`, then
+  page number ascending. No drag/drop reordering.
+- **Never rewrite a plan silently.** Page count drift is `CONFIG STALE`, a missing
+  file is `MISSING PDF`, and both keep their mapping and their queue state; a
+  RECONCILE/relink is always explicit (`pagejob.apply_reconcile`). A missing,
+  disabled or unplannable document may only have its items *disabled*, never reset
+  or deleted.
+- **Two documents must never write the same AI.** Output names stay PDF aware; the
+  config validator and `BatchQueue.duplicate_outputs()` both refuse a colliding plan
+  before the first Illustrator call.
 - **Python owns orchestration** (project folders, PDF discovery, page count,
   template mapping, naming, config, queue/state, logging, validation).
   **JSX owns Illustrator** (documents, DOM, cleanup, template/ARTWORK, save).

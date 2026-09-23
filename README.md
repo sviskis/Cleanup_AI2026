@@ -5,7 +5,7 @@
 | **Repository** | `sviskis/Cleanup_AI2026` |
 | **Local folder** | `Cleanup_AI2026` |
 | **Display name** | Cleanup AI 2026 |
-| **Version** | 0.2.0 |
+| **Version** | 0.5.0 |
 
 Two systems in one repository:
 
@@ -29,10 +29,17 @@ PDF page
 
 ## Status
 
-Version **0.4.0**. The Python pipeline, the JSX worker, the one page milestone, the
-**persistent batch queue** (state.json, recovery, continue/retry, CLI) and the
-**Tkinter GUI** are implemented and verified with real Illustrator runs. See
-`STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
+Version **0.5.0**. The Python pipeline, the JSX worker, the one page milestone, the
+**persistent batch queue** (state.json, recovery, continue/retry, CLI), the
+**Tkinter GUI** and the **multi PDF project queue** (several PDFs per JOB, one plan
+and one set of states each, explicit RECONCILE) are implemented and verified with
+real Illustrator runs. See `STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
+
+One JOB can hold several PDFs; each has its own page plan, its own queue states and
+its own outputs (`manualis__001.ai`, `appendix__001.ai`). The order is `documents[]`
+first, then page number. A PDF whose page count changed is `CONFIG STALE` and a
+deleted one is `MISSING PDF` - both keep their mapping and their history until the
+operator reconciles or the file comes back.
 
 ## Quick start (new pipeline)
 
@@ -63,6 +70,11 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --status
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --continue      # after a crash/stop
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --retry-errors  # after fixing a page
+
+# several PDFs in one JOB: project scope by default, --pdf narrows it
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --build
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --pdf appendix.pdf --run-all
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\MULTI_JOB --pdf appendix.pdf --reconcile
 ```
 
 `run_one`: `--preflight-only` validates without touching Illustrator; `--dry-run`

@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.4.0
+Version: 0.5.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 3 done - the Tkinter GUI (`python app.py`) drives the proven queue in a worker thread and ran a real Illustrator batch (run selected, forced ERROR, retry, close/reopen); the cleanup JSX and the Python<->JSX contract are unchanged**
+Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own plan, outputs and persistent states); the GUI drives them with RUN CURRENT PDF / RUN ALL ENABLED PDFs / CONTINUE PROJECT / RETRY PROJECT ERRORS, shows CONFIG STALE / MISSING PDF and reconciles explicitly; a real two PDF Illustrator run passed**
 
 ## Working
 
@@ -73,6 +73,35 @@ Status: **Milestone 3 done - the Tkinter GUI (`python app.py`) drives the proven
 * Details, tab reference and acceptance evidence: `docs/GUI.md`;
   screenshots `temp/gui_mapping.png`, `temp/gui_run.png`.
 
+### Multi PDF project queue (milestone 4)
+
+* `config.json` is version 2: `{version: 2, defaults, documents[]}` with one block
+  per PDF (`pdf`, `page_count`, `enabled`, `pages[]`, `removed_pages[]`). A version 1
+  file is migrated **in memory** on read, so every existing JOB keeps working; the
+  file is rewritten as v2 on the next plan save.
+* Identity is `pdf_id` (stable, derived from the file name, never `hash()`) plus
+  page: `manualis_p001`, `appendix_p001` ... Page numbers alone are never used as
+  identity, and a bare page number in a multi PDF JOB is reported as ambiguous.
+* One plan per document (`core/pagejob.py`): `plan_project` orders documents by
+  `documents[]` and then by page number; `plan_document` reports `OK`, `NEW`,
+  `CONFIG STALE`, `MISSING PDF` or `PLAN ERROR` and **never rewrites** anything.
+* Page count drift: `CONFIG STALE (stored: 42, current: 44)` until the operator
+  runs an explicit RECONCILE - kept pages keep template/output/state, new pages
+  become WAITING with the defaults, removed pages move to `removed_pages` (never
+  deleted, restored when the page comes back).
+* A missing PDF file is `MISSING PDF`: its plan and its queue states are kept and
+  its items are disabled, so it is recoverable as soon as the file returns.
+* Output naming stays PDF aware (`manualis__001.ai`, `appendix__001.ai`); the config
+  validator and a `BatchQueue` guard both refuse a plan in which two documents would
+  write the same AI (the pass aborts before the first Illustrator call).
+* Queue semantics are unchanged per document: a failure in `manualis.pdf` page 17
+  does not stop page 18 or `appendix.pdf`; only a global Illustrator/COM failure
+  aborts a pass.
+* GUI: the PDF tab lists the documents (`USE / PDF / PAGES / CONFIG STATUS /
+  QUEUE STATUS`), MAPPING edits the active document only (it says which one), the
+  RUN tab has the project actions and a per document progress list; screenshots
+  `temp/gui_m4_pdf.png`, `temp/gui_m4_run.png`, `temp/gui_m4_reopen.png`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -86,7 +115,7 @@ Status: **Milestone 3 done - the Tkinter GUI (`python app.py`) drives the proven
 | --- | --- |
 | `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring, `jsx/` ASCII only + no BOM + LF) |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 182 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, GUI controller/tasks/window |
+| `pytest` | 214 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, multi PDF queue (identity, drift, reconcile, collisions), GUI controller/tasks/window, GUI multi PDF |
 | `app.py --diagnose` | paths and interpreter reported |
 | `run_one --preflight-only` (14 page demo PDF) | 17 checks OK, request JSON written to `runtime/current_job.json` |
 | `run_one --dry-run` | valid contract request produced |
@@ -95,6 +124,7 @@ Status: **Milestone 3 done - the Tkinter GUI (`python app.py`) drives the proven
 | **Batch queue, real Illustrator** (`temp\QUEUE_JOB`, `temp/run_queue_batch_test.py`) | `--run-all` -> 001 DONE / 002 SKIPPED / 003 DONE / 004 DONE; second pass reruns nothing; lost per-page template -> 003 ERROR + 004 DONE; `--retry-errors` -> 003 DONE; process killed during page 4 -> `--status` shows 004 INTERRUPTED -> `--continue` -> 004 DONE |
 | **13 page pass** of the same PDF through the queue | `DONE=13 SKIPPED=1`, `state.json` written after every page, 0 documents left open |
 | **GUI acceptance, real Illustrator** (`temp/run_gui_acceptance.py`, `temp/gui_acceptance.txt`) | Open JOB -> PDF shows 14 pages (PyMuPDF) -> 14 mapping rows with the persisted states -> RESET SELECTED + manual template change -> VALIDATE 24 checks / 0 errors -> RUN SELECTED: live `WAITING -> RUNNING -> DONE` x3 -> forced ERROR (`OUTPUT_PREP_FAILED`, locked output) -> RETRY ERRORS: `ERROR -> WAITING -> RUNNING -> DONE` -> window closed and reopened: states restored -> 0 Illustrator documents open. Screenshots: `temp/gui_mapping.png`, `temp/gui_run.png` |
+| **GUI acceptance, TWO PDFs in one JOB** (`temp/run_gui_acceptance_m4.py`, `temp/gui_acceptance_m4.txt`) | Both PDFs detected (3 + 3 pages, `WAITING 3` each) -> both configured, config order `[manualis, appendix]` -> RUN CURRENT PDF: manualis `WAITING -> RUNNING -> DONE` x3 while appendix stays `WAITING 3` -> RUN ALL ENABLED PDFs: appendix DONE x3 -> appendix grew to 4 pages: `CONFIG STALE (stored: 3, current: 4)` with `config.json` unchanged -> RECONCILE: page 004 WAITING, states kept -> locked output + RESET in manualis: `manualis.pdf#2 WAITING -> ERROR` **while** `appendix.pdf#4` ran to DONE -> RETRY PROJECT ERRORS: `ERROR -> RUNNING -> DONE` -> closed/reopened: every state persisted, 7/7 outputs (`manualis__001..003.ai`, `appendix__001..004.ai`) -> MASTER SHA256 unchanged -> 0 Illustrator documents open. Screenshots: `temp/gui_m4_pdf.png`, `temp/gui_m4_run.png`, `temp/gui_m4_reopen.png` |
 | Adapter handshake (fake Illustrator) | stale result deleted, matching result accepted, mismatching result rejected + logged, late result picked up, timeout with log tail, COM error as `ERROR` result |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
@@ -133,10 +163,11 @@ Status: **Milestone 3 done - the Tkinter GUI (`python app.py`) drives the proven
 
 ## Next milestone
 
-1. Multi PDF queue in one run (the schema already carries `pdf` per item); the GUI
-   would then show one MAPPING table per PDF.
-2. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
+1. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
    real `.ait` template run (`template_mode = "saveas"`).
-3. "Stop after the current page" for the batch loop (now: close the window and
-   `CONTINUE`, or Ctrl+C plus `--continue`).
-4. Remember the last JOB (and its active PDF) between GUI sessions.
+2. "Stop after the current page" for the batch loop (now: close the window and
+   `CONTINUE PROJECT`, or Ctrl+C plus `--continue`).
+3. Remember the last JOB (and its active document) between GUI sessions.
+4. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
+5. Optional: per document RECONCILE report in the log file, and a "RECONCILE ALL"
+   action for a JOB whose PDFs were all replaced.

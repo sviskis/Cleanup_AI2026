@@ -38,10 +38,11 @@ state with recovery, milestone-first order).
 | 7 | First milestone: one page end to end (`run_one.py`) | **DONE** - two real Illustrator runs recorded in `STATUS.md` |
 | 8 | Queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED, resume, continue, retry | **DONE** (`docs/QUEUE_STATE.md`) |
 | 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **DONE** (`docs/GUI.md`, `temp/gui_acceptance.txt`) |
-| 10 | Batch policy: one bad page must not stop the batch, final summary | **DONE** for the policy + summary; multi PDF queue still open |
-| 11 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
+| 10 | Batch policy: one bad page must not stop the batch, final summary | **DONE** for the policy + summary |
+| 11 | Multi PDF project queue: several PDFs per JOB, one plan and one set of states each | **DONE** (`docs/QUEUE_STATE.md` §4, `temp/gui_acceptance_m4.txt`) |
+| 12 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
 
-## 2. What exists now (v0.4.0)
+## 2. What exists now (v0.5.0)
 
 ```text
 jsx/cleanup.jsx      canonical Illustrator engine (cleanup + document helpers + stats contract)
@@ -62,7 +63,10 @@ pdf_ai_batch/
   core/pdf_info.py   discovery, natural sort, page count (PyMuPDF -> pypdf)
   core/template_mapper.py  positional mapping, master exclusion, default fallback
   core/project.py    JOB folders and paths
-  core/config.py     config.json validation + atomic save
+  core/config.py     config.json v2 (documents[]) + validation + atomic save + reconcile
+  core/pagejob.py    one page plan + per document plan (drift/missing status, reconcile)
+  core/state.py      state.json model, transitions, recovery, per document summaries
+  core/queue.py      BatchQueue: project scope, per document runs, collision guard
   core/contract.py   request/result schemas, stats mapping, summary counters
   core/validation.py preflight checks
   adapters/illustrator.py  the only COM code: attach/launch/run_job/close_documents
@@ -126,7 +130,7 @@ Two contract rules the run proved and that every later milestone must keep (see
 | CONTINUE after restart, retry errors | `core/queue.py` + `batch.py` - **DONE**; "stop after the current page" is still open |
 | Mapping table (PAGE / USE / TEMPLATE / LAYER / OUTPUT / STATUS) with select all/none/invert, auto assign, manual assign, move up/down, refresh, validate | `gui/mapping_tab.py` (the queue state already carries the STATUS per page) |
 | Batch summary DONE / SKIPPED / ERROR at the end | `core/queue.BatchSummary` + `batch.py` - **DONE** |
-| Multi PDF queue (several PDFs, each with its own page plan) | still open (`state.json` already carries `pdf` per item) |
+| Multi PDF queue (several PDFs, each with its own page plan) | `core/config.py` v2 + `core/pagejob.plan_project` + `core/queue.run_documents` - **DONE** (explicit RECONCILE, `CONFIG STALE` / `MISSING PDF` handling, cross document output collision guard) |
 
 ## 5. Non-goals (kept out on purpose)
 

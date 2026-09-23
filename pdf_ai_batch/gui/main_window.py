@@ -180,6 +180,9 @@ class MainWindow(tk.Tk):
     def refresh_all(self) -> None:
         """Rebuild every tab from the controller (never from GUI-owned state)."""
         self._ensure_job_logging()
+        if self.controller.project is not None:
+            # opening a JOB must show the project queue (both PDFs, states included)
+            self.controller.ensure_queue_built()
         for tab in (self.project_tab, self.pdf_tab, self.mapping_tab, self.run_tab):
             refresh = getattr(tab, "refresh", None)
             if callable(refresh):

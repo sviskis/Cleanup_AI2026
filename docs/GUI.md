@@ -1,4 +1,4 @@
-# GUI (milestone 3) - Cleanup AI 2026
+# GUI (milestones 3-4) - Cleanup AI 2026
 
 `python app.py`  (or `python app.py --gui`, or `python -m pdf_ai_batch.gui`) opens the
 Tkinter window. Opening it **never** launches Illustrator: Illustrator is only
@@ -53,9 +53,29 @@ run_task(label, task)  --------------->  TaskRunner thread: BatchQueue + adapter
 | Tab | What it does | Core it uses |
 |---|---|---|
 | PROJECT | NEW PROJECT / OPEN PROJECT / ADD PDF / ADD TEMPLATES / OPEN JOB FOLDER; shows the six JOB folders with their state | `core/project.py` |
-| PDF | pick the PDF of `JOB/PDF`; shows file name, absolute path, page count, method, size, config status | `core/pdf_info.py`, `core/config.py` |
-| MAPPING | `USE / PAGE / TEMPLATE / LAYER / OUTPUT / STATUS` table, SELECT ALL/NONE, ENABLE/DISABLE SELECTED, RESET SELECTED, VALIDATE, AUTO ASSIGN TEMPLATES, ASSIGN TEMPLATE, USE DEFAULT TEMPLATE, double click = change the template of that row | `core/pagejob.py`, `core/template_mapper.py`, `core/config.py`, `core/naming.py`, `core/queue.py`, `core/validation.py` |
-| RUN / LOG | RUN SELECTED, RUN ALL ENABLED, CONTINUE, RETRY ERRORS, RETRY INTERRUPTED, REFRESH STATUS, HEALTH CHECK, overwrite checkbox, progress ("Page 004 / 014" from the queue state) and the live log | `core/queue.py`, `core/state.py`, `adapters/illustrator.py` |
+| PDF | the JOB's **document list**: `USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS` plus IZMANTOT (makes it the active document), IESLĒGT/IZSLĒGT (USE), RECONCILE, PIEVIENOT PDF..., ATJAUNOT; details: path, page count, method, size, config status, queue status, document status | `core/pdf_info.py`, `core/pagejob.py`, `core/config.py`, `core/queue.py` |
+| MAPPING | the plan of the **active document** (`PDF: manualis.pdf | Lapas: 42`): `USE / PAGE / TEMPLATE / LAYER / OUTPUT / STATUS` table, SELECT ALL/NONE, ENABLE/DISABLE SELECTED, RESET SELECTED, VALIDATE, AUTO ASSIGN TEMPLATES, ASSIGN TEMPLATE, USE DEFAULT TEMPLATE, RECONCILE PDF, double click = change the template of that row | `core/pagejob.py`, `core/template_mapper.py`, `core/config.py`, `core/naming.py`, `core/queue.py`, `core/validation.py` |
+| RUN / LOG | RUN SELECTED, RUN CURRENT PDF, RUN ALL ENABLED PDFs, CONTINUE PROJECT, RETRY PROJECT ERRORS, RETRY INTERRUPTED, REFRESH STATUS, HEALTH CHECK, overwrite checkbox, project + document progress (`PDFs: 2 | Lapas kopā: 7`, `appendix.pdf - lapa 004 / 004`, one line per document) and the live log | `core/queue.py`, `core/state.py`, `adapters/illustrator.py` |
+
+### Documents (milestone 4)
+
+* A JOB may hold several PDFs. The **active document** is the one MAPPING shows and
+  edits; selecting it in the PDF tab is enough (`select_document`). Plan edits
+  always carry the other documents over untouched, so editing one PDF can never
+  drop another PDF's plan.
+* `USE` is the document switch in `config.json` (`documents[i].enabled`). A disabled
+  document keeps its plan and its queue states; the queue simply disables its items.
+* `CONFIG STATUS` shows `nav config.json (auto)`, `config.json: N lapas, iespējotas M`
+  or `CONFIG STALE: stored 42, current 44` / `PDF nav atrasts - plāns saglabāts`.
+* `QUEUE STATUS` shows the current states of that document (`WAITING 3`,
+  `DONE 3 | WAITING 1 | ERROR 1`, ...) or `nav rindā`.
+* **RECONCILE** (PDF tab and MAPPING tab) asks for confirmation and then reaches
+  `core/pagejob.apply_reconcile`: pages that still exist keep template/output/state,
+  new pages become `WAITING` with the defaults, removed pages are archived in
+  `removed_pages` (never deleted, restored if the page comes back). Nothing in the
+  pipeline ever rewrites a mapping on its own.
+* A deleted PDF shows `MISSING PDF` (also when it only survives in `state.json`),
+  keeps every state and becomes runnable again when the file is back.
 
 * The template chooser lists the files already inside `JOB/TEMPLATE` (natural sort)
   and offers a `PĀRLŪKOT...` button that **copies** an outside file into `JOB/TEMPLATE`
@@ -98,10 +118,41 @@ page instead of reporting `SKIP`.
 
 ## Not in this milestone
 
-No multi-PDF batch, no database/SQLite, no drag and drop, no thumbnails/PDF preview,
-no multiprocessing, no second Illustrator instance, no UXP, no template "intelligence".
+No drag/drop reordering, no database/SQLite, no thumbnails/PDF preview, no
+multiprocessing, no second Illustrator instance, no parallel Illustrator work, no
+UXP, no template "intelligence", no cloud sync. (Multiple PDFs per JOB arrived in
+milestone 4; each document is still processed strictly one page at a time.)
 
 ## Acceptance evidence (real Illustrator, 2026-09-23)
+
+### Milestone 4 - two PDFs in one JOB
+
+`temp/run_gui_acceptance_m4.py` builds a real JOB (`temp/MULTI_JOB`: `manualis.pdf`
+3 pages + `appendix.pdf` 3 pages, both extracted from the 14 page demo PDF, real
+`MASTER_AI_TEMPLATE.ai`) and drives the real widgets. Transcript:
+`temp/gui_acceptance_m4.txt`, screenshots `temp/gui_m4_pdf.png`,
+`temp/gui_m4_run.png`, `temp/gui_m4_reopen.png`.
+
+```
+2 PDF      appendix.pdf   lapas=3  nav config.json (auto)   | WAITING 3
+2 PDF      manualis.pdf   lapas=3  nav config.json (auto)   | WAITING 3
+3 MAPPING  PDF: manualis.pdf | Lapas: 3 | rindas=3 ; PDF: appendix.pdf | Lapas: 3 | rindas=3
+   dokumentu secība (config.json): ['manualis.pdf', 'appendix.pdf']
+4 RUN CURRENT PDF live: {manualis#1..3: 'WAITING->RUNNING->DONE'} | appendix {1,2,3: 'WAITING'}
+5 PDF      appendix.pdf: WAITING 3
+6 RUN ALL ENABLED PDFs live: {appendix#1..3: 'WAITING->RUNNING->DONE'} | manualis DONE 3
+7 PDF      appendix.pdf: lapas=4 (stored 3) | CONFIG STALE (stored: 3, current: 4)   (config.json nav mainīts)
+8 RECONCILE -> OK (config) | 4 lapas | WAITING 1 | DONE 3      (jaunā lapa 004 = WAITING)
+9 ERROR    manualis 002 -> ERROR (output aizņemts)  live={'manualis#2': 'WAITING->ERROR',
+                                                        'appendix#4': 'WAITING->RUNNING->DONE'}
+10 RETRY PROJECT ERRORS live: {'manualis#2': 'ERROR->RUNNING'} -> manualis 002 DONE
+11 close + reopen: {"manualis.pdf": 1..3 DONE, "appendix.pdf": 1..4 DONE} | output faili 7/7
+12 MASTER template nemainīts (SHA256 7214386ADC8FCFA1...)
+13 Illustrator atvērti dokumenti: 0
+=== MILESTONE 4 ACCEPTANCE OK ===
+```
+
+### Milestone 3 - one PDF, twelve tabs-steps
 
 `temp/run_gui_acceptance.py` drives the **real widgets** through their handlers
 (dialogs stubbed, no mouse) against the real `temp/QUEUE_JOB` (14 page PDF,

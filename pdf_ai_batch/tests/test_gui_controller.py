@@ -244,7 +244,8 @@ def test_has_running_items_follows_the_state(gui):
 def test_progress_summary_derives_from_the_queue_state(gui, adapter):
     snapshot = gui.progress()
     assert snapshot.total == 4 and snapshot.processed == 0
-    assert snapshot.current_label() == "Page --- / 004"
+    # nothing is queued yet: the label only knows the plan size
+    assert snapshot.current_label() == "Lapas --- / 004"
     assert snapshot.fraction == 0.0
 
     adapter.script[4] = "skip"
@@ -255,8 +256,12 @@ def test_progress_summary_derives_from_the_queue_state(gui, adapter):
     assert snapshot.counts[state.SKIPPED] == 1
     assert snapshot.processed == 4
     assert snapshot.fraction == 1.0
-    assert snapshot.current_label() == "Page 004 / 004"
+    assert snapshot.pdfs == 1
+    assert snapshot.document == "manual.pdf"
+    assert snapshot.current_label() == "manual.pdf - lapa 004 / 004"
     assert "DONE: 3" in snapshot.summary_lines()
+    assert "PDFs: 1" in snapshot.summary_lines()
+    assert snapshot.document_lines() == ["manual.pdf: 3/4 DONE | WAITING 0 | ERROR 0 | SKIPPED 1"]
 
 
 def test_validation_reports_human_readable_problems(gui, job):
@@ -327,3 +332,28 @@ def test_gui_python_sources_never_touch_com_tk_or_state_files_directly():
     for name in ("controller.py", "tasks.py"):
         modules = set(import_pattern.findall(sources[name]))
         assert not any(module.startswith("tkinter") for module in modules), name
+
+    # no duplicated queue logic: state transitions and ordering live in core/queue.py
+    controller_source = sources["controller.py"]
+    for forbidden in (
+        "state.mark_running(",
+        "state.mark_done(",
+        "state.mark_error(",
+        "state.mark_skipped(",
+        "state.mark_interrupted(",
+        "state.recover_running(",
+        "document.items.sort(",
+        "replace(item",
+    ):
+        assert forbidden not in controller_source, forbidden
+    # every run action is a call into the proven queue
+    for queue_call in (
+        "queue.run_documents(",
+        "queue.run_all_enabled(",
+        "queue.continue_queue(",
+        "queue.retry_errors(",
+        "queue.retry_interrupted(",
+        "queue.run_items(",
+        "queue.reconcile_document(",
+    ):
+        assert queue_call in controller_source, queue_call

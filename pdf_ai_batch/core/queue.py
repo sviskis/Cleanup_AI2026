@@ -46,7 +46,7 @@ from .contract import (
     contract_path,
     summarise_results,
 )
-from .naming import new_run_id
+from .naming import new_run_id, pdf_id_for
 from .pagejob import PagePlan, PagePlanError, output_ready
 from .project import JobProject
 
@@ -88,6 +88,8 @@ class RunOutcome:
     page: int
     state_name: str
     output: str = ""
+    pdf_id: str = ""
+    pdf: str = ""
     error_type: str = ""
     message: str = ""
     objects_copied: int = 0
@@ -105,9 +107,15 @@ class RunOutcome:
     def failed(self) -> bool:
         return self.state_name == state.ERROR
 
+    @property
+    def document(self) -> str:
+        """Document label of this outcome (file name when known, else pdf_id)."""
+        return self.pdf or self.pdf_id
+
     def line(self) -> str:
         """One compact console line for the batch progress output."""
-        text = f"{self.page:03d} {self.state_name:<11} {self.output}"
+        prefix = f"{self.pdf_id} " if self.pdf_id else ""
+        text = f"{prefix}{self.page:03d} {self.state_name:<11} {self.output}"
         if self.state_name == state.DONE and self.objects_copied:
             text += f"  ({self.objects_copied} objekti)"
         if self.state_name == state.ERROR:
@@ -132,6 +140,28 @@ class BatchSummary:
     aborted: bool = False
     stop_reason: str = ""
     recovered: list[str] = field(default_factory=list)
+    documents: list[dict] = field(default_factory=list)
+
+    @property
+    def pdfs(self) -> int:
+        """Number of documents in the queue."""
+        return int(self.counts.get("pdfs", len(self.documents)))
+
+    @property
+    def pages_total(self) -> int:
+        return int(self.counts.get("total", self.total))
+
+    def document_lines(self) -> list[str]:
+        """One line per document: progress and counts of that PDF."""
+        lines: list[str] = []
+        for row in self.documents:
+            counts = row.get("counts") or {}
+            lines.append(
+                f"  {row.get('pdf', row.get('pdf_id', '?')):<24} "
+                f"{row.get('processed', 0)}/{row.get('pages', 0)} apstrādātas | "
+                + " ".join(f"{name}={counts.get(name, 0)}" for name in state.VALID_STATES)
+            )
+        return lines
 
     @property
     def run_stats(self) -> dict:
@@ -157,15 +187,28 @@ class BatchSummary:
             "total": self.total,
             "enabled": self.enabled,
             "runnable": self.runnable,
+            "pdfs": self.pdfs,
             "started": self.started,
             "finished": self.finished,
             "aborted": self.aborted,
             "stop_reason": self.stop_reason,
             "recovered": list(self.recovered),
+            "documents": [
+                {
+                    "pdf_id": row.get("pdf_id", ""),
+                    "pdf": row.get("pdf", ""),
+                    "pages": row.get("pages", 0),
+                    "processed": row.get("processed", 0),
+                    "current_page": row.get("current_page", 0),
+                    "counts": dict(row.get("counts") or {}),
+                }
+                for row in self.documents
+            ],
             "run": self.run_stats,
             "items": [
                 {
                     "job_id": outcome.job_id,
+                    "pdf_id": outcome.pdf_id,
                     "page": outcome.page,
                     "state": outcome.state_name,
                     "output": outcome.output,
@@ -180,13 +223,15 @@ class BatchSummary:
         }
 
     def format(self) -> str:
-        """The end of batch report (DONE / SKIPPED / ERROR / INTERRUPTED)."""
+        """The end of batch report: project view, then every document."""
         counts = self.counts
         lines = [
+            f"PDFs: {self.pdfs} | Lapas kopā: {self.pages_total}",
             "Kopsavilkums: "
             + " ".join(f"{name}={counts.get(name, 0)}" for name in state.VALID_STATES)
-            + f" (kopā {self.total}, iespējoti {self.enabled})"
+            + f" (kopā {self.total}, iespējoti {self.enabled})",
         ]
+        lines.extend(self.document_lines())
         run = self.run_stats
         lines.append(
             "Šajā piegājienā: "
@@ -337,35 +382,64 @@ class BatchQueue:
     def counts(self) -> dict[str, int]:
         return state.summary(self.document)
 
-    def find(self, item_id: str | int) -> state.QueueItem:
-        item = self.document.find(item_id)
+    def document_progress(self) -> list[dict]:
+        """Per document progress rows (documents in queue order)."""
+        return state.document_summaries(self.document)
+
+    def documents(self) -> list[str]:
+        """Document ids present in the queue, in queue order."""
+        return self.document.document_ids()
+
+    def items_of(self, pdf: str | Path) -> list[state.QueueItem]:
+        """Items of one document (only that PDF)."""
+        return self.document.items_of(pdf)
+
+    def find(self, item_id: str | int, *, pdf: str | Path | None = None) -> state.QueueItem:
+        item = self.document.find(item_id, pdf=pdf)
         if item is None:
+            matches = self.document.candidates(item_id)
+            if len(matches) > 1:
+                documents = ", ".join(sorted({match.document for match in matches}))
+                raise QueueError(
+                    f"elements '{item_id}' ir vairākos dokumentos ({documents}) - "
+                    "norādi job_id (piem. manualis_p001) vai izvēlies dokumentu"
+                )
             raise QueueError(f"elements nav atrasts: {item_id}")
         return item
 
-    def find_or_none(self, item_id: str | int) -> state.QueueItem | None:
-        return self.document.find(item_id)
+    def find_or_none(self, item_id: str | int, *, pdf: str | Path | None = None) -> state.QueueItem | None:
+        return self.document.find(item_id, pdf=pdf)
 
     def problems(self) -> list[str]:
         return list(self.document.problems)
 
     # -------------------------------------------------------------------- status
 
-    def status_rows(self) -> list[tuple[str, str, str]]:
-        """(page, state, output) rows for the CLI table."""
-        rows: list[tuple[str, str, str]] = []
+    def status_rows(self) -> list[tuple[str, str, str, str]]:
+        """(pdf_id, page, state, output) rows for the CLI table, in queue order."""
+        rows: list[tuple[str, str, str, str]] = []
         for item in self.document.items:
             label = item.state if item.enabled else f"{item.state} (off)"
-            rows.append((f"{item.page:03d}", label, item.output))
+            rows.append((item.document, f"{item.page:03d}", label, item.output))
         return rows
 
     def status_table(self) -> str:
-        """Compact PAGE / STATE / OUTPUT table plus the counts and any failures."""
+        """Compact PDF / PAGE / STATE / OUTPUT table plus the project summary."""
         counts = self.counts()
-        lines = ["PAGE  STATE         OUTPUT"]
-        for page, label, output in self.status_rows():
-            lines.append(f"{page}   {label:<13} {output}")
+        rows = self.status_rows()
+        width = max(3, min(24, max((len(row[0]) for row in rows), default=3)))
+        lines = [f"{'PDF':<{width}} PAGE  STATE         OUTPUT"]
+        for pdf_id, page, label, output in rows:
+            lines.append(f"{pdf_id:<{width}} {page}   {label:<13} {output}")
         lines.append("")
+        lines.append(f"PDFs: {counts.get('pdfs', 0)} | Lapas kopā: {counts['total']}")
+        for row in self.document_progress():
+            per_pdf = row.get("counts") or {}
+            lines.append(
+                f"  {row.get('pdf', row.get('pdf_id', '?'))}: "
+                f"{row.get('processed', 0)}/{row.get('pages', 0)} apstrādātas | "
+                + " ".join(f"{name}={per_pdf.get(name, 0)}" for name in state.VALID_STATES)
+            )
         lines.append(
             "Kopā: "
             + " ".join(f"{name}={counts.get(name, 0)}" for name in state.VALID_STATES)
@@ -402,6 +476,7 @@ class BatchQueue:
             aborted=aborted,
             stop_reason=stop_reason,
             recovered=list(recovered or []),
+            documents=self.document_progress(),
         )
 
     # -------------------------------------------------------------------- build
@@ -410,57 +485,111 @@ class BatchQueue:
         self,
         *,
         pdf: str | Path | None = None,
+        pdfs: Iterable[str | Path] | None = None,
         pages: str | Iterable[int] | None = None,
         template: str | None = None,
         layer: str | None = None,
         overwrite: bool | None = None,
         template_mode: str = "auto",
-        plan: PagePlan | None = None,
+        plan: "PagePlan | ProjectPlan | None" = None,
         reset: bool = False,
     ) -> list[state.QueueItem]:
-        """Plan the pages of one PDF and merge them into state.json.
+        """Plan the pages of one or more PDFs and merge them into state.json.
+
+        Scope: `pdf` = one document, `pdfs` = a list of documents, neither = the whole
+        project (every configured document, then any extra PDF found in JOB/PDF).
+
+        Merge rules (per document, unchanged since milestone 2):
 
         * pages that are new to the queue are added as WAITING
         * existing items keep their state/attempts/error history; only the plan
           fields (template, output, layer, mode, enabled) are refreshed
-        * items that are no longer part of the plan are disabled, never dropped
+        * items that are no longer part of the plan of a **planned** document are
+          disabled, never dropped
+        * items of documents that were **not** planned keep their state untouched
+          (a missing PDF must not lose anything)
+        * a missing, disabled or unplannable document has its items disabled (never
+          reset), so nothing from it can run until it is back
         * reset=True makes every planned page a fresh WAITING item
+
+        The queue is re-ordered to the documented deterministic order: document order
+        (config order) first, then page number ascending.
         """
-        plan = plan or pagejob.plan_pages(
-            self.project,
-            pdf=pdf,
-            pages=pages,
-            template=template,
-            layer=layer,
-            overwrite=bool(overwrite),
-            template_mode=template_mode,
-        )
+        if plan is None:
+            targets = None
+            if pdf is not None:
+                targets = [pdf]
+            elif pdfs is not None:
+                targets = list(pdfs)
+            plan = pagejob.plan_project(
+                self.project,
+                pdfs=targets,
+                pages=pages,
+                template=template,
+                layer=layer,
+                overwrite=bool(overwrite),
+                template_mode=template_mode,
+            )
+
+        if isinstance(plan, PagePlan):  # a single document plan (legacy callers, tests)
+            documents = [pagejob.document_from_page_plan(plan)]
+        else:
+            documents = list(plan.documents)
 
         planned: dict[str, state.QueueItem] = {}
-        for job in plan.pages:
-            planned[job.job_id] = self._item_from_job(job, reset=reset)
+        planned_documents: set[str] = set()
+        for document in documents:
+            for warning in document.warnings:
+                self.log.warning("Plāna brīdinājums: %s", warning)
+            planned_documents.add(document.pdf_id)
+            if document.missing or document.status == pagejob.DOC_STATUS_PLAN_ERROR:
+                self._disable_document(document.pdf_id, f"dokuments nav pieejams ({document.status})")
+                continue
+            for job in document.pages:
+                planned[job.job_id] = self._item_from_job(job, reset=reset)
+
         for item in planned.values():
             self.document.replace_item(item)
-
-        for warning in plan.warnings:
-            self.log.warning("Plāna brīdinājums: %s", warning)
 
         for index, item in enumerate(list(self.document.items)):
             if item.job_id in planned or not item.enabled:
                 continue
+            if item.document not in planned_documents:
+                continue  # not planned in this pass: leave its state alone
             self.document.items[index] = replace(item, enabled=False, updated=state.now_stamp())
             self.log.info("Izslēdzu %s (vairs nav plānā)", item.job_id)
 
+        self._sort_items([document.pdf_id for document in documents])
         self.save()
+
         additions = [item.job_id for item in planned.values()]
         self.log.info(
-            "Queue: %s lapas no %s (%s): %s",
-            len(plan.pages),
-            plan.pdf.name,
-            plan.source,
+            "Queue: %s dokumenti, %s lapas | %s | %s",
+            len(documents),
+            len(planned),
+            ", ".join(document.pdf_name for document in documents) or "(neviens)",
             ", ".join(additions[:5]) + ("..." if len(additions) > 5 else ""),
         )
         return self.items()
+
+    def _disable_document(self, pdf_id: str, reason: str) -> int:
+        """Disable every item of one document without touching its state/history."""
+        disabled = 0
+        for index, item in enumerate(list(self.document.items)):
+            if item.document != pdf_id or not item.enabled:
+                continue
+            self.document.items[index] = replace(item, enabled=False, updated=state.now_stamp())
+            disabled += 1
+        if disabled:
+            self.log.info("Izslēdzu %s elementus (%s): %s", disabled, pdf_id, reason)
+        return disabled
+
+    def _sort_items(self, order: Sequence[str]) -> None:
+        """Deterministic queue order: document order first, then page ascending."""
+        position = {pdf_id: index for index, pdf_id in enumerate(order)}
+        self.document.items.sort(
+            key=lambda item: (position.get(item.document, len(position)), item.document, item.page)
+        )
 
     def ensure_built(self, **build_kwargs) -> list[state.QueueItem]:
         """Build the queue when state.json does not hold any item yet."""
@@ -476,6 +605,7 @@ class BatchQueue:
             "pdf": contract_path(job.pdf),
             "template": contract_path(job.template),
             "output": contract_path(job.output),
+            "pdf_id": job.pdf_id or pdf_id_for(job.pdf),
             "layer": job.layer,
             "template_mode": job.mode,
             "clear_layer": job.clear_layer,
@@ -523,6 +653,37 @@ class BatchQueue:
         goals = state.RUNNABLE_STATES
         return self._run_selection(
             self._selection(goals), progress=progress, recovered=recovered
+        )
+
+    def run_documents(
+        self,
+        pdfs: Sequence[str | Path],
+        *,
+        progress: ProgressCallback | None = None,
+        limit: int | None = None,
+        rebuild: bool = False,
+        build_kwargs: dict | None = None,
+    ) -> BatchSummary:
+        """Run the backlog of specific documents (the GUI's "RUN CURRENT PDF").
+
+        The whole project plan is refreshed first (so every document is present in the
+        queue and stays WAITING), but only the pages of the given documents are run.
+        Every other PDF keeps its state exactly as it is.
+        """
+        recovered = self.recover_running()
+        if rebuild:
+            try:
+                self.build_queue(**(build_kwargs or {}))
+            except (PagePlanError, OSError) as exc:
+                self.log.error("Nevar izveidot rindu: %s", exc)
+                summary = self.summary(recovered=recovered)
+                summary.aborted = True
+                summary.stop_reason = str(exc)
+                return summary
+        return self._run_selection(
+            self._selection(state.RUNNABLE_STATES, limit=limit, pdfs=pdfs),
+            progress=progress,
+            recovered=recovered,
         )
 
     def continue_queue(
@@ -598,9 +759,34 @@ class BatchQueue:
         self.quarantine_state()
         return self.recover_running() if recover else []
 
-    def skip_item(self, item_id: str | int, message: str = "Manuāli izlaists") -> state.QueueItem:
+    def reconcile_document(self, pdf: str | Path) -> dict:
+        """Explicitly reconcile one document (page count drift). Returns the report.
+
+        The config is rewritten as version 2 with the same order of documents, the
+        stored pages keep their settings, added pages get the defaults and removed
+        pages move to `removed_pages`. Nothing else in the project is touched.
+        """
+        _config, report = pagejob.apply_reconcile(self.project, pdf)
+        self.log.info(
+            "RECONCILE %s | stored %s -> current %s | added %s | removed %s | restored %s",
+            report.get("pdf"),
+            report.get("stored"),
+            report.get("current"),
+            report.get("added"),
+            report.get("removed"),
+            report.get("restored"),
+        )
+        return report
+
+    def skip_item(
+        self,
+        item_id: str | int,
+        message: str = "Manuāli izlaists",
+        *,
+        pdf: str | Path | None = None,
+    ) -> state.QueueItem:
         """Mark one item SKIPPED (DONE must be reset first, RUNNING cannot be skipped)."""
-        item = self.find(item_id)
+        item = self.find(item_id, pdf=pdf)
         if item.state == state.RUNNING:
             raise QueueError(f"{item.job_id} pašlaik darbojas (RUNNING) - nevar izlaist")
         if item.state == state.DONE:
@@ -611,18 +797,24 @@ class BatchQueue:
         self.log.info("SKIP %s | %s", item.job_id, message)
         return updated
 
-    def reset_item(self, item_id: str | int) -> state.QueueItem:
+    def reset_item(self, item_id: str | int, *, pdf: str | Path | None = None) -> state.QueueItem:
         """Back to WAITING, whatever the state was (including DONE and SKIPPED)."""
-        item = self.find(item_id)
+        item = self.find(item_id, pdf=pdf)
         updated = state.mark_waiting(item)
         self.document.replace_item(updated)
         self.save()
         self.log.info("RESET %s -> WAITING", item.job_id)
         return updated
 
-    def set_enabled(self, item_id: str | int, enabled: bool) -> state.QueueItem:
+    def set_enabled(
+        self,
+        item_id: str | int,
+        enabled: bool,
+        *,
+        pdf: str | Path | None = None,
+    ) -> state.QueueItem:
         """Enable/disable an item without changing its state history."""
-        item = self.find(item_id)
+        item = self.find(item_id, pdf=pdf)
         updated = replace(item, enabled=bool(enabled), updated=state.now_stamp())
         self.document.replace_item(updated)
         self.save()
@@ -631,9 +823,50 @@ class BatchQueue:
 
     # ------------------------------------------------------------------- engine
 
-    def _selection(self, states: Sequence[str], *, limit: int | None = None) -> list[state.QueueItem]:
-        wanted = set(states)
-        items = [item for item in self.document.items if item.enabled and item.state in wanted]
+    def duplicate_outputs(self, items: Sequence[state.QueueItem] | None = None) -> dict[str, list[str]]:
+        """Output file names that more than one item would write (collision check).
+
+        Documents are processed separately, but they all write into the same AI_OUT:
+        page 1 of `manualis.pdf` and page 1 of `appendix.pdf` must never end up in the
+        same file. The default output scheme is PDF aware, this catches the rest (a
+        hand edited plan, two documents that resolve to one name, ...).
+        """
+        seen: dict[str, list[str]] = {}
+        for item in self.document.items if items is None else items:
+            seen.setdefault(Path(item.output).name.lower(), []).append(item.job_id)
+        return {name: ids for name, ids in seen.items() if len(ids) > 1}
+
+    def _duplicate_guard(
+        self, selection: Sequence[state.QueueItem]
+    ) -> tuple[dict[str, list[str]], BatchSummary | None]:
+        """(collisions, summary-to-return). A collision aborts the pass, never runs."""
+        collisions = self.duplicate_outputs(selection)
+        if not collisions:
+            return {}, None
+        name, ids = next(iter(sorted(collisions.items())))
+        reason = f"dublēti output ceļi {name}: {', '.join(ids)}"
+        self.log.error("Pārtraucu piegājienu: %s", reason)
+        summary = self.summary(aborted=True, stop_reason=reason)
+        return collisions, summary
+
+    def _selection(
+        self,
+        states: Sequence[str],
+        *,
+        limit: int | None = None,
+        pdfs: Sequence[str | Path] | None = None,
+    ) -> list[state.QueueItem]:
+        """Enabled items in the given states, in queue order (optionally one document)."""
+        wanted: set[str] | None = None
+        if pdfs is not None:
+            wanted = {pdf_id_for(pdf) for pdf in pdfs}
+        items = [
+            item
+            for item in self.document.items
+            if item.enabled
+            and item.state in states
+            and (wanted is None or item.document in wanted)
+        ]
         return items[:limit] if limit else items
 
     def _requeue(
@@ -676,6 +909,12 @@ class BatchQueue:
         if not selection:
             self.log.info("Nav izpildāmu elementu")
             return self.summary(recovered=recovered, started=started)
+
+        collisions, collision_summary = self._duplicate_guard(selection)
+        if collision_summary is not None:
+            collision_summary.recovered = list(recovered)
+            collision_summary.started = started
+            return collision_summary
 
         self.close_leftovers()
         outcomes: list[RunOutcome] = []
@@ -849,6 +1088,8 @@ class BatchQueue:
             page=item.page,
             state_name=item.state,
             output=item.output,
+            pdf_id=item.document,
+            pdf=item.pdf_name,
             error_type=item.error_type,
             message=message or item.error_message,
             objects_copied=objects_copied,

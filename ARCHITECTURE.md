@@ -181,6 +181,35 @@ The full description (state machine, schema, CLI, evidence) is
   template/output/layer/mode, shared by `run_one` and the queue, so a single page
   test and a batch page cannot drift apart.
 
+## 3b. Multi PDF projects (milestone 4)
+
+One JOB holds several PDFs; each one is planned, queued and reported separately.
+
+* **Identity**: `pdf_id` (stable, derived from the file name, never `hash()`) plus
+  the page. `job_id = <pdf_id>_p<page:03d>` (`manualis_p001`, `appendix_p001`), so
+  the same page number in two documents never collides. A bare page number in a
+  multi PDF JOB is ambiguous and is reported as such instead of guessing.
+* **Config**: `config.json` version 2 = `{version: 2, defaults, documents[]}` with
+  one block per PDF (`pdf`, `page_count`, `enabled`, `pages[]`, `removed_pages[]`).
+  A version 1 file is migrated **in memory** by `load_config` (the existing JOB
+  keeps working, byte identical, until a plan edit is saved).
+* **Order**: `documents[]` order first, then page number ascending. New PDFs appear
+  after the configured ones, in natural sort order.
+* **Drift**: a PDF whose page count no longer matches the stored one is
+  `CONFIG STALE (stored: 42, current: 44)`; the stored plan is used and nothing is
+  rewritten. RECONCILE (`core/pagejob.apply_reconcile`) is explicit, keeps the
+  settings and the states of the pages that still exist, makes new pages `WAITING`
+  and archives removed pages in `removed_pages` (restored when the page returns).
+* **Missing PDF**: `MISSING PDF`; the plan and every queue state of that document
+  are kept, its items are disabled so nothing can be run from it, and it becomes
+  runnable again as soon as the file is back.
+* **Output collisions**: names stay PDF aware (`manualis__001.ai`); the config
+  validator AND `BatchQueue.duplicate_outputs()` refuse a plan in which two
+  documents would write the same AI. A colliding pass aborts before the first
+  Illustrator call.
+* **Failure isolation** (unchanged): a page level failure never stops the batch,
+  not even across documents; only a global adapter/COM failure aborts the pass.
+
 ## 4. JOB layout
 
 ```text
@@ -208,7 +237,9 @@ Python owns output names (`core/naming.py`):
 
 Width is `max(3, digits(page_count))`; the job id is `manual_p017`. The older
 scheme (`manual_p03.ai`) exists only inside the frozen baseline
-(`legacy/current_working_v10.jsx`).
+(`legacy/current_working_v10.jsx`). Because a JOB can hold several PDFs, the stem in
+both names is the document's `pdf_id`, which keeps `manualis__001.ai` and
+`appendix__001.ai` apart.
 
 ## 6. Page count
 

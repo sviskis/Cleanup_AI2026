@@ -8,7 +8,7 @@ There are **three** automated gates plus a manual Illustrator checklist.
 | --- | --- | --- | --- |
 | JSX static + ES3 compile | `tools\check_jsx.ps1` | include graph, real ES3 compile, ES3 syntax scan, module API wiring, for **both** entry points (`src/Main.jsx`, `jsx/worker.jsx`) | no |
 | JSX unit + contract tests | `tools\run_tests.ps1` | 79 unit tests (stubbed host) + 44 JSON contract tests against the shared fixtures | no |
-| Python tests | `.venv\Scripts\python.exe -m pytest` | 80 tests: naming, natural sort, page count (PyMuPDF + pypdf fallback), mapping, config, contract, atomic IO, preflight, adapter handshake | no |
+| Python tests | `.venv\Scripts\python.exe -m pytest` | 214 tests: naming, natural sort, page count (PyMuPDF + pypdf fallback), mapping, config (v1 -> v2 migration), contract, atomic IO, preflight, adapter handshake, queue, multi PDF (identity, drift, reconcile, collisions), GUI controller/tasks/window | no |
 | Manual | `docs/TESTING.md` §2 (below) | actual cleaning result, visual quality, error paths | yes |
 
 All three automated gates must be green before a commit (`.clinerules`).
@@ -108,6 +108,7 @@ Tk cannot open):
 .venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_controller.py -q   # 17
 .venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_tasks.py -q        # 6
 .venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_smoke.py -q        # 6
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_multi_pdf.py -q    # 10
 ```
 
 What they cover: project loading populates the model, PDF selection reports the page
@@ -129,6 +130,42 @@ Real acceptance (one Illustrator run, ~2 minutes, `temp/run_gui_acceptance.py`):
    WAITING -> RUNNING -> DONE`,
 8. close the window, open a new one: states restored,
 9. verify `Illustrator.Application.Documents.Count == 0`.
+
+## 0d. Several PDFs in one JOB (milestone 4)
+
+Automated (no Illustrator, no display):
+
+```powershell
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_multi_pdf.py -q        # 16
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_multi_pdf.py -q    # 10
+```
+
+What they cover: two PDFs with the same page numbers get unique `job_id`s, the queue
+order is document order then page ascending, one PDF's error does not stop another
+PDF (while a COM failure still aborts the pass), output collisions are a config
+error and abort a run before Illustrator is called, version 1 configs migrate (and an
+existing v1 JOB reopens with the same states), state files without `pdf_id` are
+upgraded silently, page count drift is reported without rewriting anything, RECONCILE
+adds / restores / archives pages and keeps DONE states, a missing PDF keeps its plan
+and recovers, multi PDF continue/retry, per document summaries and the GUI's current
+PDF filtering.
+
+Real acceptance (two Illustrator runs of 3 + 3 pages, ~4 minutes,
+`temp/run_gui_acceptance_m4.py`):
+
+1. open the real `temp/MULTI_JOB` (two real PDFs + a real MASTER template),
+2. PDF tab: both documents detected with pages and queue status,
+3. AUTO ASSIGN TEMPLATES for both (config order `[manualis, appendix]`),
+4. RUN CURRENT PDF: manualis `WAITING -> RUNNING -> DONE` x3, appendix stays
+   `WAITING 3`,
+5. RUN ALL ENABLED PDFs: appendix runs too,
+6. append a page to `appendix.pdf`: `CONFIG STALE (stored 3, current 4)` and
+   `config.json` unchanged, then RECONCILE -> page 004 `WAITING`,
+7. hold `manualis__002.ai` open and RESET that page: `manualis#2 WAITING -> ERROR`
+   **while** `appendix#4` runs to DONE,
+8. RETRY PROJECT ERRORS: `manualis#2 ERROR -> RUNNING -> DONE`,
+9. close/reopen the window: every state persisted, 7/7 outputs, MASTER SHA256
+   unchanged, `Illustrator.Application.Documents.Count == 0`.
 
 ## 1. Automated checks
 ```powershell

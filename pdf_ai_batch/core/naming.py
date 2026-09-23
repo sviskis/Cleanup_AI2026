@@ -16,6 +16,7 @@ for new jobs.
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,51 @@ def pdf_stem(pdf_name_or_path: str | Path) -> str:
     """File name of a PDF without its extension."""
     return Path(str(pdf_name_or_path)).stem
 
+
+def pdf_id_for(pdf_name_or_path: str | Path) -> str:
+    """Stable identifier of one document inside a JOB, e.g. "manualis".
+
+    It is derived from the file name only (never from `hash()` or a timestamp), so
+    the same JOB opened on another day, or in another session, produces the same
+    queue item ids. Two PDFs cannot share a stem inside one `JOB/PDF` folder, which
+    makes `job_id_for` unique across documents.
+    """
+    return pdf_stem(pdf_name_or_path)
+
+
+_KEY_STRIP = re.compile(r"[^0-9a-z]+")
+
+
+def pdf_key_for(pdf_name_or_path: str | Path) -> str:
+    """Comparison key of a document: case folded, separators collapsed.
+
+    Used to detect two configured documents that would resolve to the same file or
+    the same output names ("Manual (1).pdf" vs "manual_1.pdf") without touching the
+    readable `pdf_id`.
+    """
+    text = unicodedata.normalize("NFKD", pdf_stem(pdf_name_or_path)).lower()
+    return _KEY_STRIP.sub("_", text).strip("_") or "pdf"
+
+
+def job_id_for(pdf_name_or_path: str | Path, page: int) -> str:
+    """Stable identifier of one page job, e.g. "manual_p017".
+
+    Format: `<pdf_id>_p<page, zero padded to 3>`. The PDF part makes the id unique
+    across every document of a JOB, so page 1 of two PDFs never collides.
+    """
+    return f"{pdf_id_for(pdf_name_or_path)}_p{int(page):03d}"
+
+
+def job_id_parts(job_id: str) -> tuple[str, int]:
+    """Split "manualis_p017" into ("manualis", 17). ("", 0) when not a page id."""
+    text = str(job_id or "")
+    head, separator, tail = text.rpartition("_p")
+    if not separator:
+        return "", 0
+    try:
+        return head, int(tail)
+    except ValueError:
+        return "", 0
 
 def default_output_name(stem: str, page: int, page_count: int, pattern: str = DEFAULT_PATTERN) -> str:
     """Return the output file name for one page."""

@@ -1,48 +1,96 @@
-"""PDF tab: pick the PDF of the JOB and show page count, size and config status."""
+"""PDF tab: the JOB's documents (USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS).
+
+One JOB can hold several PDFs; each has its own plan, its own queue states and its
+own outputs. Selecting a row makes that document active: the MAPPING tab then shows
+(and edits) exactly that PDF, and RUN CURRENT PDF runs only its pages.
+
+Nothing is rewritten here: a document whose PDF changed size shows `CONFIG STALE`
+and waits for an explicit RECONCILE; a document whose file is gone shows
+`MISSING PDF` and keeps its plan and its queue state.
+"""
 
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from .controller import ControllerError
 from .context import GuiContext
 
+STATUS_COLOURS = {
+    "CONFIG STALE": "#a15c00",
+    "MISSING PDF": "#b00020",
+    "PLAN ERROR": "#b00020",
+    "OK": "#1a7f37",
+    "NEW": "#0b5cad",
+}
+
 
 class PdfTab(ttk.Frame):
-    """Left: the PDFs found in JOB/PDF. Right: what the core reports about one."""
+    """Top: the document table. Bottom: what the core reports about the selection."""
 
     def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
         super().__init__(parent, padding=8)
         self.ctx = context
         self._buttons: list[ttk.Button] = []
+        self._rows: list[Any] = []
+        self._loading = False  # suppress selection events while filling the table
         self._build()
 
     # ------------------------------------------------------------------ widgets
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
 
-        panes = ttk.Panedwindow(self, orient="horizontal")
-        panes.grid(row=0, column=0, sticky="nsew")
+        bar = ttk.Frame(self)
+        bar.grid(row=0, column=0, sticky="ew")
+        for index in range(5):
+            bar.columnconfigure(index, weight=1)
+        specs = (
+            ("IZMANTOT (MAPPING)", self.on_use, 0, 0),
+            ("IESLĒGT/IZSLĒGT", self.on_toggle_use, 0, 1),
+            ("RECONCILE", self.on_reconcile, 0, 2),
+            ("PIEVIENOT PDF...", self.on_add_pdf, 0, 3),
+            ("ATJAUNOT", self.on_refresh, 0, 4),
+        )
+        for label, handler, row, column in specs:
+            button = ttk.Button(bar, text=label, command=handler)
+            button.grid(row=row, column=column, sticky="ew", padx=2, pady=2)
+            self._buttons.append(button)
 
-        list_frame = ttk.Frame(panes)
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(1, weight=1)
-        ttk.Label(list_frame, text="JOB/PDF").grid(row=0, column=0, sticky="w")
-        self.listbox = tk.Listbox(list_frame, height=12, exportselection=False)
-        self.listbox.grid(row=1, column=0, sticky="nsew", pady=(4, 4))
-        self.listbox.bind("<<ListboxSelect>>", self._on_select)
-        scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
-        scroll.grid(row=1, column=1, sticky="ns", pady=(4, 4))
-        self.listbox.configure(yscrollcommand=scroll.set)
-        self.refresh_button = ttk.Button(list_frame, text="ATJAUNOT SARAKSTU", command=self.refresh)
-        self.refresh_button.grid(row=2, column=0, sticky="ew")
-        panes.add(list_frame, weight=1)
+        columns = ("use", "pdf", "pages", "config_status", "queue_status")
+        frame = ttk.Frame(self)
+        frame.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "use": ("USE", 50, "center", False),
+            "pdf": ("PDF", 260, "w", True),
+            "pages": ("PAGES", 130, "center", False),
+            "config_status": ("CONFIG STATUS", 300, "w", True),
+            "queue_status": ("QUEUE STATUS", 330, "w", True),
+        }
+        for key, (text, width, anchor, stretch) in headings.items():
+            self.tree.heading(key, text=text)
+            self.tree.column(key, width=width, anchor=anchor, stretch=stretch)
+        for label, colour in STATUS_COLOURS.items():
+            self.tree.tag_configure(label, foreground=colour)
+        self.tree.tag_configure("disabled", background="#f2f2f2")
+        self.tree.tag_configure("active", background="#eef4fb")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vscroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        vscroll.grid(row=0, column=1, sticky="ns")
+        hscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        hscroll.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Double-1>", lambda _event: self.on_use())
 
-        details = ttk.Frame(panes, padding=(12, 0, 0, 0))
+        details = ttk.LabelFrame(self, text="Izvēlētais dokuments")
+        details.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         details.columnconfigure(1, weight=1)
         self.fields: dict[str, ttk.Label] = {}
         rows = (
@@ -52,87 +100,198 @@ class PdfTab(ttk.Frame):
             ("Skaits", "method"),
             ("Izmērs", "size"),
             ("Config", "config"),
+            ("Rinda", "queue"),
+            ("Statuss", "status"),
         )
         for index, (label, key) in enumerate(rows):
             ttk.Label(details, text=f"{label}:").grid(row=index, column=0, sticky="nw", pady=2)
-            value = ttk.Label(details, text="-", wraplength=520, justify="left")
+            value = ttk.Label(details, text="-", wraplength=760, justify="left")
             value.grid(row=index, column=1, sticky="nw", padx=(8, 0), pady=2)
             self.fields[key] = value
-        self.use_button = ttk.Button(details, text="IZMANTOT ŠO PDF", command=self.on_use_pdf)
-        self.use_button.grid(row=len(rows), column=0, columnspan=2, sticky="ew", pady=(12, 4))
-        self.note = ttk.Label(details, text="", foreground="#444", wraplength=520, justify="left")
-        self.note.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w")
-        panes.add(details, weight=2)
+        self.note = ttk.Label(details, text="", foreground="#444", wraplength=900, justify="left")
+        self.note.grid(row=len(rows), column=0, columnspan=2, sticky="w")
 
     # ------------------------------------------------------------------ actions
 
     def _selected_name(self) -> str | None:
-        selection = self.listbox.curselection()
-        if not selection:
-            return None
-        return self.listbox.get(selection[0])
+        selection = self.tree.selection()
+        return selection[0] if selection else None
+
+    def _row(self, name: str | None):
+        return next((row for row in self._rows if row.name == name), None)
 
     def _on_select(self, _event: Any = None) -> None:
+        if self._loading:
+            return
         name = self._selected_name()
         if name is None:
             return
         try:
-            entry = self.ctx.controller.select_pdf(name)
+            row = self.ctx.controller.select_document(name)
         except ControllerError as exc:
             self.ctx.report(str(exc), error=True)
             return
-        self._show(entry)
-        self.ctx.report(f"PDF: {entry.name} | {entry.page_count} lapas ({entry.count_method})")
-        self.ctx.refresh()
+        self._show(row)
+        self.ctx.report(
+            f"Dokuments: {row.name} | {row.page_count} lapas | {row.status_text} | {row.queue_status}"
+        )
 
-    def on_use_pdf(self) -> None:
-        name = self._selected_name()
-        if name is None:
+    def on_use(self) -> None:
+        """Make the selected document the active one (what MAPPING edits)."""
+        if self._selected_name() is None:
             messagebox.showinfo("PDF", "Izvēlies PDF sarakstā.", parent=self)
             return
         self._on_select()
+        self.ctx.refresh()
 
-    def _show(self, entry) -> None:
-        self.fields["name"].configure(text=entry.name)
-        self.fields["path"].configure(text=str(entry.path))
-        self.fields["pages"].configure(text=str(entry.page_count))
-        self.fields["method"].configure(text=entry.count_method)
-        self.fields["size"].configure(text=f"{entry.size_mb} MB ({entry.size_bytes} B)")
-        self.fields["config"].configure(text=entry.config_status)
-        self.note.configure(
-            text="Lapas skaita Python (PyMuPDF, pypdf rezerve) - Illustratoris to nekad neskaita."
+    def on_toggle_use(self) -> None:
+        """USE column: enable/disable the whole document for runs."""
+        row = self._row(self._selected_name())
+        if row is None:
+            self.ctx.report("Izvēlies PDF sarakstā.", error=True)
+            return
+        try:
+            self.ctx.controller.set_document_enabled(row.name, not row.enabled)
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report(f"{row.name}: {'izslēgts (USE nav atzīmēts)' if row.enabled else 'ieslēgts'}")
+        self.ctx.refresh()
+
+    def on_reconcile(self) -> None:
+        """Explicit reconciliation of the selected document (page count drift)."""
+        row = self._row(self._selected_name())
+        if row is None:
+            self.ctx.report("Izvēlies PDF sarakstā.", error=True)
+            return
+        if row.missing:
+            self.ctx.report(f"{row.name}: PDF fails nav atrasts - RECONCILE nav iespējams", error=True)
+            return
+        if not messagebox.askyesno(
+            "RECONCILE",
+            f"Pārplānot {row.name}?\n\n"
+            f"config.json: {row.stored_page_count or 'nav'} lapas\n"
+            f"PDF tagad: {row.page_count} lapas\n\n"
+            "Esošās lapas saglabā template/output/stāvokli, jaunas kļūst WAITING, "
+            "noņemtās tiek arhivētas (netiek dzēstas).",
+            parent=self,
+        ):
+            return
+        try:
+            report = self.ctx.controller.reconcile_document(row.name)
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report(
+            f"RECONCILE {report.get('pdf')}: {report.get('stored')} -> {report.get('current')} lapas | "
+            f"pievienotas {', '.join(str(page) for page in report.get('added') or []) or '-'} | "
+            f"noņemtas {', '.join(str(page) for page in report.get('removed') or []) or '-'}"
         )
+        self.ctx.refresh()
+
+    def on_add_pdf(self) -> None:
+        paths = filedialog.askopenfilenames(
+            parent=self,
+            title="Pievienot PDF mapē JOB/PDF",
+            filetypes=[("PDF", "*.pdf"), ("Visi faili", "*.*")],
+        )
+        if not paths:
+            return
+        try:
+            added, skipped = self.ctx.controller.add_pdf(list(paths))
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report(
+            f"Pievienoti PDF: {', '.join(added) or '-'} (izlaisti: {', '.join(skipped) or '-'})"
+        )
+        self.ctx.refresh()
+
+    def on_refresh(self) -> None:
+        self.ctx.refresh()
 
     # ------------------------------------------------------------------ refresh
 
     def refresh(self, *_args: Any) -> None:
-        pdfs = []
+        """Fill the document table from the controller; never drop the selection."""
+        rows = []
         if self.ctx.controller.project is not None:
-            pdfs = [path.name for path in self.ctx.controller.list_pdfs()]
+            try:
+                rows = self.ctx.controller.documents()
+            except ControllerError as exc:
+                rows = []
+                self.ctx.report(str(exc), error=True)
+        self._rows = rows
 
-        current = self._selected_name()
-        self.listbox.delete(0, tk.END)
-        for name in pdfs:
-            self.listbox.insert(tk.END, name)
+        keep = self._selected_name() or (
+            self.ctx.controller.active_pdf.name if self.ctx.controller.active_pdf else None
+        )
+        self._loading = True
+        try:
+            self.tree.delete(*self.tree.get_children())
+            for row in rows:
+                tags = [row.status]
+                if not row.enabled:
+                    tags.append("disabled")
+                if row.active:
+                    tags.append("active")
+                self.tree.insert(
+                    "",
+                    "end",
+                    iid=row.name,
+                    values=(
+                        row.use_label,
+                        row.name,
+                        row.pages_label,
+                        row.status_text,
+                        row.queue_status,
+                    ),
+                    tags=tuple(tags),
+                )
+            names = [row.name for row in rows]
+            target = keep if keep in names else (names[0] if names else None)
+            if target is not None:
+                self.tree.selection_set(target)
+        finally:
+            self._loading = False
 
-        target = current if current in pdfs else (pdfs[0] if pdfs else None)
         if target is None:
             for label in self.fields.values():
                 label.configure(text="-")
             self.note.configure(text="JOB/PDF mapē nav neviena PDF faila.")
             return
-        self.listbox.selection_set(pdfs.index(target))
+
         if self.ctx.controller.active_pdf is None or self.ctx.controller.active_pdf.name != target:
             try:
-                self.ctx.controller.select_pdf(target)
+                self.ctx.controller.select_document(target)
             except ControllerError as exc:
                 self.ctx.report(str(exc), error=True)
                 return
-        try:
-            self._show(self.ctx.controller.pdf_entry())
-        except ControllerError as exc:
-            self.ctx.report(str(exc), error=True)
+        row = self._row(target)
+        if row is not None:
+            self._show(row)
+
+    def _show(self, row) -> None:
+        self.fields["name"].configure(text=row.name)
+        self.fields["path"].configure(text=str(row.path))
+        self.fields["pages"].configure(text=row.pages_label)
+        self.fields["method"].configure(text=row.count_method or "-")
+        self.fields["size"].configure(
+            text=f"{round(row.path.stat().st_size / (1024 * 1024), 1)} MB"
+            if row.path.is_file()
+            else "-"
+        )
+        self.fields["config"].configure(text=row.config_status)
+        self.fields["queue"].configure(text=row.queue_status)
+        self.fields["status"].configure(text=row.status_text)
+        self.note.configure(
+            text=(
+                "USE = vai dokumentu palaiž RUN ALL ENABLED PDFs. Lapu skaitu nosaka Python "
+                "(PyMuPDF); Illustratoris to nekad neskaita. CONFIG STALE / MISSING PDF "
+                "nemaina plānu bez RECONCILE."
+            )
+        )
 
     def set_busy(self, busy: bool) -> None:
-        for button in (self.refresh_button, self.use_button):
+        for button in self._buttons:
             button.configure(state="disabled" if busy else "normal")

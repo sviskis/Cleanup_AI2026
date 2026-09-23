@@ -43,9 +43,10 @@ class RunTab(ttk.Frame):
         actions.columnconfigure(0, weight=1)
         specs = (
             ("RUN SELECTED", self.on_run_selected),
-            ("RUN ALL ENABLED", self.on_run_all),
-            ("CONTINUE", self.on_continue),
-            ("RETRY ERRORS", self.on_retry_errors),
+            ("RUN CURRENT PDF", self.on_run_current),
+            ("RUN ALL ENABLED PDFs", self.on_run_all),
+            ("CONTINUE PROJECT", self.on_continue),
+            ("RETRY PROJECT ERRORS", self.on_retry_errors),
             ("RETRY INTERRUPTED", self.on_retry_interrupted),
             ("REFRESH STATUS", self.on_refresh),
             ("HEALTH CHECK", self.on_health),
@@ -68,14 +69,19 @@ class RunTab(ttk.Frame):
         progress = ttk.LabelFrame(top, text="Progress")
         progress.grid(row=0, column=1, sticky="nsew")
         progress.columnconfigure(0, weight=1)
-        self.current = ttk.Label(progress, text="Page --- / ---", font=("Segoe UI", 14, "bold"))
+        self.current = ttk.Label(progress, text="Lapas --- / ---", font=("Segoe UI", 14, "bold"))
         self.current.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
         self.progressbar = ttk.Progressbar(progress, maximum=1000, mode="determinate")
         self.progressbar.grid(row=1, column=0, sticky="ew", padx=10)
         self.counts = ttk.Label(progress, text="", justify="left")
-        self.counts.grid(row=2, column=0, sticky="w", padx=10, pady=(8, 10))
+        self.counts.grid(row=2, column=0, sticky="w", padx=10, pady=(8, 4))
+        ttk.Label(progress, text="Dokumenti:", foreground="#444").grid(
+            row=3, column=0, sticky="w", padx=10
+        )
+        self.documents = ttk.Label(progress, text="", justify="left", foreground="#444")
+        self.documents.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 8))
         self.busy_label = ttk.Label(progress, text="", foreground="#0b5cad")
-        self.busy_label.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 8))
+        self.busy_label.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 8))
 
         log_frame = ttk.LabelFrame(self, text="Log (skats; kanoniskie logi ir JOB/LOG)")
         log_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -135,21 +141,31 @@ class RunTab(ttk.Frame):
             lambda progress: self.ctx.controller.run_selected(job_ids, progress=progress),
         )
 
-    def on_run_all(self) -> None:
+    def on_run_current(self) -> None:
+        """RUN CURRENT PDF: the document selected in the PDF tab (others wait)."""
         self._start(
-            "RUN ALL ENABLED",
+            "RUN CURRENT PDF",
+            lambda progress: self.ctx.controller.run_document(progress=progress),
+        )
+
+    def on_run_all(self) -> None:
+        """RUN ALL ENABLED PDFs: every enabled document of the JOB."""
+        self._start(
+            "RUN ALL ENABLED PDFs",
             lambda progress: self.ctx.controller.run_all_enabled(progress=progress),
         )
 
     def on_continue(self) -> None:
+        """CONTINUE PROJECT: WAITING + INTERRUPTED across every document."""
         self._start(
-            "CONTINUE",
+            "CONTINUE PROJECT",
             lambda progress: self.ctx.controller.continue_queue(progress=progress),
         )
 
     def on_retry_errors(self) -> None:
+        """RETRY PROJECT ERRORS: ERROR -> WAITING in every document, then run."""
         self._start(
-            "RETRY ERRORS",
+            "RETRY PROJECT ERRORS",
             lambda progress: self.ctx.controller.retry_errors(progress=progress),
         )
 
@@ -195,6 +211,7 @@ class RunTab(ttk.Frame):
         self.current.configure(text=snapshot.current_label())
         self.progressbar["value"] = round(snapshot.fraction * 1000)
         self.counts.configure(text="\n".join(snapshot.summary_lines()))
+        self.documents.configure(text="\n".join(snapshot.document_lines()) or "(nav dokumentu rindā)")
 
     def show_summary(self, summary: BatchSummary) -> None:
         """End of pass report: counts from the state, statistics from the pass."""
