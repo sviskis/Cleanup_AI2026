@@ -1,5 +1,12 @@
 # Architecture
 
+> **Note (v0.2.0):** this document describes the **legacy single-file JSX
+> application** in `src/` (phase 1 of the project). The production architecture is
+> now the Python orchestrator + Illustrator worker; see
+> [`/ARCHITECTURE.md`](../ARCHITECTURE.md) and [`/MIGRATION_PLAN.md`](../MIGRATION_PLAN.md).
+> `src/` is still the reference for the ScriptUI workflow and is kept as the
+> baseline the Python pipeline is compared against.
+
 ## 1. Layering
 
 ```text

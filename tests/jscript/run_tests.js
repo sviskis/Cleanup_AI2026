@@ -55,7 +55,7 @@ ok("all expected modules registered", missingModules.length === 0, missingModule
 
 section("config defaults (reference behaviour)");
 
-eq("version", PDC.CONFIG.version, "0.1.0");
+eq("version", PDC.CONFIG.version, "0.2.0");
 eq("dryRun", PDC.CONFIG.dryRun, false);
 eq("debug", PDC.CONFIG.debug, false);
 eq("overwriteExisting", PDC.CONFIG.overwriteExisting, false);

@@ -35,7 +35,7 @@ $modules = @(
     'src\utils\Paths.jsx',
     'src\services\LogService.jsx',
     'src\services\ErrorService.jsx',
-    'src\core\PdfCleanup.jsx',
+    'jsx\cleanup.jsx',
     'src\core\PdfPageCount.jsx',
     'src\core\TemplateManager.jsx',
     'src\core\OutputManager.jsx',
@@ -76,7 +76,23 @@ Write-Host $text.TrimEnd()
 Write-Host ""
 if ($LASTEXITCODE -eq 0 -and $text -match 'ALL TESTS PASSED') {
     Write-Host "RESULT: unit tests PASSED"
+} else {
+    Write-Host "RESULT: unit tests FAILED (exit code $LASTEXITCODE)"
+    exit 1
+}
+
+# ---------------------------------------------------------------- JSON contract
+Write-Host ""
+Write-Host "running JSON contract test (jsx/json2.js + tests/fixtures) ..."
+$jsonTest = Join-Path $scriptDir '..\tests\jscript\test_json_contract.js'
+$jsonOut = & cscript //nologo //E:JScript $jsonTest 2>&1
+$jsonText = ($jsonOut | Out-String) -replace "`r`n", "`n"
+Write-Host $jsonText.TrimEnd()
+
+Write-Host ""
+if ($LASTEXITCODE -eq 0 -and $jsonText -match 'JSON CONTRACT TESTS PASSED') {
+    Write-Host "RESULT: JSON contract tests PASSED"
     exit 0
 }
-Write-Host "RESULT: unit tests FAILED (exit code $LASTEXITCODE)"
+Write-Host "RESULT: JSON contract tests FAILED (exit code $LASTEXITCODE)"
 exit 1

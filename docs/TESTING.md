@@ -1,10 +1,42 @@
 # Testing
 
-Two levels:
+There are **three** automated gates plus a manual Illustrator checklist.
 
-1. **Automated** (no Illustrator needed) - run before every commit.
-2. **Manual in Illustrator** - run before a real job, because the appearance of
-   cleaned artwork can only be judged visually.
+| Gate | Command | What it proves | Needs Illustrator |
+| --- | --- | --- | --- |
+| JSX static + ES3 compile | `tools\check_jsx.ps1` | include graph, real ES3 compile, ES3 syntax scan, module API wiring, for **both** entry points (`src/Main.jsx`, `jsx/worker.jsx`) | no |
+| JSX unit + contract tests | `tools\run_tests.ps1` | 79 unit tests (stubbed host) + 44 JSON contract tests against the shared fixtures | no |
+| Python tests | `.venv\Scripts\python.exe -m pytest` | 80 tests: naming, natural sort, page count (PyMuPDF + pypdf fallback), mapping, config, contract, atomic IO, preflight, adapter handshake | no |
+| Manual | `docs/TESTING.md` §2 (below) | actual cleaning result, visual quality, error paths | yes |
+
+All three automated gates must be green before a commit (`.clinerules`).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1
+powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1
+.venv\Scripts\python.exe -m pytest
+```
+
+## 0. The one page milestone (new pipeline)
+
+```powershell
+# a demo job with a real multi page PDF
+.venv\Scripts\python.exe tools\make_demo_job.py --root temp\DEMO_JOB --pages 14
+
+# dry checks (no Illustrator)
+.venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3 --preflight-only --skip-illustrator-check
+.venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3 --dry-run
+
+# the real one page test
+.venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3
+```
+
+Pass criteria: `Statuss : OK`, the statistics block, `Output : ir (...)`,
+`MILESTONE OK`, and `runtime\current_result.json` carrying the same `job_id` and
+`run_id` as `runtime\current_job.json`.
+
+See `MIGRATION_PLAN.md` §3 for the full procedure and what to replace first
+(real templates with an `ARTWORK` layer).
 
 ## 1. Automated checks
 

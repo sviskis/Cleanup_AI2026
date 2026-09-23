@@ -12,8 +12,12 @@
 
     Source:
       Extracted unchanged from the reference script
-      (PDF_Deep_Cleanup_AI_Template_BATCH.jsx lines 222-343).
-      Only the safeClose() calls were pointed at PDC.FileService.
+      (PDF_Deep_Cleanup_AI_Template_BATCH.jsx lines 222-336).
+      Only the safeClose() calls were pointed at PDFCleanup.safeClose.
+
+      This module contains the LEGACY page count strategy. In the Python + JSX
+      worker architecture Python is authoritative for page counts (PyMuPDF,
+      pypdf fallback); this code stays for the legacy application in src/.
 
     ExtendScript: ES3 safe. Uses File.encoding = "BINARY" for raw PDF reading.
 */
@@ -104,7 +108,7 @@ PDC.registerModule("PdfPageCount", (function () {
             probeDoc = app.open(pdfFile);
             var count = 0;
             try { count = probeDoc.artboards.length; } catch(e4) {}
-            PDC.FileService.safeClose(probeDoc, SaveOptions.DONOTSAVECHANGES);
+            PDFCleanup.safeClose(probeDoc, SaveOptions.DONOTSAVECHANGES);
             probeDoc = null;
 
             try { opts.pageToOpen = oldPage; } catch(e5) {}
@@ -115,7 +119,7 @@ PDC.registerModule("PdfPageCount", (function () {
             app.userInteractionLevel = oldInteraction;
             return count;
         } catch (err) {
-            PDC.FileService.safeClose(probeDoc, SaveOptions.DONOTSAVECHANGES);
+            PDFCleanup.safeClose(probeDoc, SaveOptions.DONOTSAVECHANGES);
             probeDoc = null;
             try { opts.pageToOpen = oldPage; } catch(e9) {}
             try { opts.pageRangeToOpen = oldRange; } catch(e10) {
@@ -133,17 +137,9 @@ PDC.registerModule("PdfPageCount", (function () {
         if (parsed > 0) return { count: parsed, method: "PDF /Pages" };
         if (aiCount === 1) return { count: 1, method: "Illustrator" };
         return { count: 1, method: "Fallback 1" };
-    }
-    function openPdfPage(pdfFile, pageNo) {
-        var opts = app.preferences.PDFFileOptions;
-        try { opts.pageToOpen = pageNo; } catch(e0) {}
-        try { opts.pageRangeToOpen = String(pageNo); } catch(e1) {}
-        try { opts.placeAsLinks = false; } catch(e2) {}
-        return app.open(pdfFile);
     }    return {
         detectPdfPageCountFromStructure: detectPdfPageCountFromStructure,
         detectPdfPageCountWithIllustrator: detectPdfPageCountWithIllustrator,
-        detectPdfPageCount: detectPdfPageCount,
-        openPdfPage: openPdfPage
+        detectPdfPageCount: detectPdfPageCount
     };
 }()));

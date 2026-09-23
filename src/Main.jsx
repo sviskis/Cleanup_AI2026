@@ -1,6 +1,6 @@
 /*
     PDF DEEP CLEANUP AI 2026
-    Version: 0.1.0
+    Version: 0.2.0
 
     Adobe:
     Illustrator (ExtendScript / JSX)
@@ -36,14 +36,13 @@
 #include "utils/Paths.jsx"
 #include "services/LogService.jsx"
 #include "services/ErrorService.jsx"
-#include "core/PdfCleanup.jsx"
+#include "../jsx/cleanup.jsx"
 #include "core/PdfPageCount.jsx"
 #include "core/TemplateManager.jsx"
 #include "core/OutputManager.jsx"
 #include "core/BatchRunner.jsx"
 #include "core/Diagnostics.jsx"
 #include "ui/BatchWindow.jsx"
-
 /* ------------------------------------------------------------------ */
 
 function projectVersionFile() {

@@ -8,12 +8,16 @@
 
     Source:
       Extracted unchanged from the reference script
-      (PDF_Deep_Cleanup_AI_Template_BATCH.jsx lines 10-15, 25-78, 183-190, 216-221).
+      (PDF_Deep_Cleanup_AI_Template_BATCH.jsx lines 10-15, 25-78, 187-190, 216-221).
       Only two details were adjusted:
         * isExcludedPdfScanFolder() reads CONFIG.excludedScanFolders now
           (same default list: template, ai_out, log, error, errors, archive, .git*);
         * listPdfFilesRecursive() takes its default depth from CONFIG.maxPdfScanDepth
           (same default value 8).
+
+      safeClose() and openPdfPage() moved to the CANONICAL Illustrator document
+      engine jsx/cleanup.jsx (PDFCleanup.*) so that document handling exists
+      exactly once in the project.
 
     ExtendScript: ES3 safe.
 */
@@ -81,10 +85,6 @@ PDC.registerModule("FileService", (function () {
         return { root: jobFolder, files: listPdfFilesRecursive(jobFolder, 8), mode: "AUTO RECURSIVE" };
     }
 
-    function safeClose(doc, saveOption) {
-        if (!doc) return;
-        try { doc.close(saveOption); } catch(e) {}
-    }
     function removeIfExists(fileObj) {
         if (fileObj && fileObj.exists) try { return fileObj.remove(); } catch(e) {}
         return true;
@@ -179,7 +179,6 @@ PDC.registerModule("FileService", (function () {
         isExcludedByName: isExcludedByName,
         listPdfFilesRecursive: listPdfFilesRecursive,
         resolvePdfQueue: resolvePdfQueue,
-        safeClose: safeClose,
         removeIfExists: removeIfExists,
         safeFileSignature: safeFileSignature,
         isWritableFolder: isWritableFolder,

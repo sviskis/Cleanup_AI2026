@@ -6,12 +6,23 @@
 logs/*
 temp/*
 output/*
+runtime/*
 *.log
 *.tmp
 
 # keep the folder markers and documentation of ignored runtime folders
 !logs/.gitkeep
 !logs/README.md
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp*/
+.pytest_cache*/
+.coverage
+htmlcov/
 
 # Illustrator / system junk
 *.bak

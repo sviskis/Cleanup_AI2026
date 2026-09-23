@@ -1,25 +1,60 @@
 # PDF Deep Cleanup AI 2026
 
-Adobe **Illustrator** ExtendScript tool that turns PDF pages into ready to use
-Illustrator documents built on a MASTER template, with an appearance safe
-"deep cleanup" of the PDF junk in between.
+Two systems in one repository:
+
+1. **Python orchestrator + Illustrator worker (v0.2.0, current)** - planning,
+   page counting, template mapping, naming, validation, logging and the batch in
+   Python; Illustrator runs as a one page worker that performs the appearance safe
+   cleanup and writes the tiles.
+2. **Legacy single-file JSX application (v0.1.0, frozen)** - the original
+   ScriptUI batch window, kept as the behavioural baseline.
+
+Both share **one** cleanup engine: `jsx/cleanup.jsx`.
 
 ```text
-PDF page (ticked in the GUI)
-   -> PDF Deep Cleanup v6 (appearance safe: ungroup only what is provably safe,
-      release only vector-only clipping masks, remove crop marks)
-   -> copy MASTER_AI_TEMPLATE.ai to AI_OUT\<pdf>_pNN.ai
-   -> duplicate the cleaned artwork into the template layer "ARTWORK"
-   -> save the AI, close the PDF without saving
+PDF page
+  -> Python (PyMuPDF page count, template mapping, output name, request JSON)
+  -> Illustrator worker (jsx/worker.jsx + jsx/cleanup.jsx)
+       cleanup v6 (appearance safe) -> template copy/convert -> ARTWORK layer
+       -> save AI -> result JSON (statistics)
+  -> Python (matching job_id + run_id accepted, logged, summarised)
 ```
-
-The master template is never modified.
 
 ## Status
 
-Version **0.1.0** - the reference script of the tool, restructured into modules
-and covered by automated checks. Behaviour is intended to be identical to
-`archive/original/PDF_Deep_Cleanup_AI_Template_BATCH.jsx`. See `STATUS.md`.
+Version **0.2.0**. The Python pipeline and the JSX worker are implemented and
+verified by automated gates; the one page end to end run inside Illustrator is the
+last open step of the first milestone (`MIGRATION_PLAN.md` §3). See `STATUS.md`.
+
+## Quick start (new pipeline)
+
+```powershell
+# 1. environment (once)
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 2. sanity check
+.venv\Scripts\python.exe app.py --diagnose
+
+# 3. a demo job with a real 14 page PDF
+.venv\Scripts\python.exe tools\make_demo_job.py --root temp\DEMO_JOB --pages 14
+
+# 4. put real templates into temp\DEMO_JOB\TEMPLATE (MASTER must have an ARTWORK layer)
+
+# 5. one page, end to end
+.venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3
+```
+
+`--preflight-only` validates without touching Illustrator; `--dry-run` writes and
+prints the request JSON.
+
+## Quick start (legacy JSX application)
+
+```text
+Illustrator -> File -> Scripts -> Other Script... -> src\Main.jsx
+```
+
+or run the frozen single file baseline: `legacy\current_working_v10.jsx`.
 
 ## Supported Adobe application
 
@@ -27,8 +62,10 @@ and covered by automated checks. Behaviour is intended to be identical to
 | --- | --- |
 | Application | Illustrator (not InDesign, not Photoshop) |
 | Language | ExtendScript / JSX, ES3 syntax only |
-| Platform | Windows (verified); paths are handled in a portable way |
-| GUI | ScriptUI dialog window |
+| Platform | Windows (verified) |
+| Automation | pywin32 COM, isolated in `pdf_ai_batch/adapters/illustrator.py` |
+| GUI | legacy: ScriptUI | new: Tkinter (next milestone) |
+
 
 ## Requirements
 
@@ -58,6 +95,30 @@ Illustrator -> File -> Scripts -> Other Script... -> <project>\src\Main.jsx
 `src/Main.jsx` is the only entry point: it loads all modules with `#include`.
 
 ## Project structure
+
+```text
+jsx/                          the only Illustrator side code
+  cleanup.jsx                 CANONICAL engine: cleanup v6 + document helpers + stats contract
+  json2.js                    ES3 JSON polyfill
+  worker.jsx                  one page worker (request -> result)
+
+pdf_ai_batch/                 Python orchestrator
+  app.py  run_one.py  paths.py  logging_setup.py
+  core/  project, pdf_info, naming, template_mapper, config, contract, jsonio, validation
+  adapters/illustrator.py     the ONLY COM code (pywin32)
+  tests/                      80 pytest tests
+
+src/                          legacy ScriptUI application (phase 1, kept as baseline)
+legacy/current_working_v10.jsx frozen baseline (generated, hashed)
+archive/original/             the untouched predecessor scripts
+tools/                        gates + migration tools (see tools/README.md)
+tests/                        JSX unit tests, JSON contract test, shared fixtures
+docs/                         CODE_ANALYSIS, ARCHITECTURE (legacy), WORKFLOW, TESTING, PYTHON_ENV
+config/default_config.json    JSON mirror of the legacy config
+MIGRATION_PLAN.md             the approved migration plan and its status
+```
+
+## How to run
 
 ```text
 src/
@@ -94,7 +155,7 @@ All values live in `src/config/Config.jsx`:
 ```javascript
 PDC.CONFIG = {
     appName: "PDF Deep Cleanup → AI Template Batch",
-    version: "0.1.0",
+    version: "0.2.0",
     debug: false,              // verbose logging
     dryRun: false,             // true = plan and log only, write nothing
     overwriteExisting: false,  // default for the "Pārrakstīt esošos AI" checkbox
@@ -144,7 +205,7 @@ in the layer `ARTWORK`.
 * GUI log panel - live view of the same events.
 
 ```text
-2026-09-23 15:30:10 | INFO | Session started. Version 0.1.0 | PDF Deep Cleanup → AI Template Batch
+2026-09-23 15:30:10 | INFO | Session started. Version 0.2.0 | PDF Deep Cleanup → AI Template Batch
 2026-09-23 15:30:12 | INFO | Scan done: pdf=3 pages=18 selected=18 template=OK
 2026-09-23 15:30:14 | ERROR | [KĻŪDA] Batch page processing: Neizdevās atvērt PDF
 ```
@@ -191,28 +252,35 @@ flow: `docs/ARCHITECTURE.md`. The reference script and its analysis:
 
 ## Testing
 
-* Automation: `tools/check_jsx.ps1` (include graph, real ES3 compile, ES3 scan,
-  module API wiring) and `tools/run_tests.ps1` (79 unit tests with a stubbed
-  ExtendScript host). Both run without Illustrator.
+* JSX gates: `tools\check_jsx.ps1` (include graph, real ES3 compile for both entry
+  points, ES3 scan, module API wiring) and `tools\run_tests.ps1` (79 unit tests +
+  44 JSON contract tests).
+* Python: `.venv\Scripts\python.exe -m pytest` (80 tests, no Illustrator needed).
 * Manual: the smoke / functional / error / regression checklist in
   `docs/TESTING.md`, planned in `tests/TEST_PLAN.md`.
 
 ## Known limitations
 
-* The cleanup engine is only covered by manual visual tests - it needs
-  Illustrator.
+* The one page milestone still needs its first real Illustrator run
+  (`MIGRATION_PLAN.md` §3); everything else is verified automatically.
+* The queue / state (`state.json`, resume, retry) and the Tkinter GUI are the next
+  milestone - today the CLI processes one page at a time.
+* The cleanup engine's visual result can only be judged in Illustrator
+  (`docs/TESTING.md` §2).
 * `PRESERVE_IMAGE_STRUCTURES` / `PRESERVE_TRANSPARENCY_STRUCTURES` are documented
   intent flags without code behind them (the safe-only tests do that job).
-* Python/COM helpers for screenshots and end to end automation do not exist yet.
-* Page count of an unusual or damaged PDF falls back to `1` when both detection
-  strategies fail.
+* Page count of an unusual or damaged PDF falls back to `1` when both PyMuPDF and
+  pypdf fail (the legacy JSX behaviour was the same).
 * The 12 month calendar pipeline of the older script is archived, not migrated.
 
 ## Roadmap
 
-* P1 - run the regression comparison (R1-R5 in `docs/TESTING.md`) on a real job.
-* P2 - migrate the 12 month project pipeline (three template modes, month layers,
-  `project_info.json`) as an optional mode.
-* P2 - Python/COM helper: run the script headless, collect logs, attach a
-  screenshot to the error report.
-* P3 - optional SQLite log/history, ZIP handoff of `AI_OUT`, batch resume.
+* P1 - finish the one page milestone in Illustrator, then regression R1-R5 against
+  `legacy/current_working_v10.jsx`.
+* P1 - queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED, resume,
+  continue, retry errors, final batch summary.
+* P2 - Tkinter GUI: PROJECT / PDF / MAPPING / RUN tabs with the mapping treeview.
+* P2 - multi PDF queue in one run.
+* P3 - SQLite history, ZIP handoff of `AI_OUT`, profiles ("conservative" /
+  "aggressive" cleanup).
+

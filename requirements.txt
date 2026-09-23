@@ -1,0 +1,19 @@
+# Python dependencies for the PDF AI Batch orchestrator.
+#
+# Install into the project venv:
+#     python -m venv .venv
+#     .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# Verified with Python 3.14 on Windows (see docs/PYTHON_ENV.md).
+
+# PDF page count and page geometry (primary, Python authoritative)
+PyMuPDF>=1.24
+
+# PDF page count fallback (pure Python)
+pypdf>=4.0
+
+# Illustrator COM automation - used ONLY inside pdf_ai_batch/adapters/illustrator.py
+pywin32>=306
+
+# test runner for pdf_ai_batch/tests
+pytest>=8.0

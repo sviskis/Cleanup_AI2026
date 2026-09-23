@@ -28,8 +28,8 @@ $scriptDir = $MyInvocation.MyCommand.Path
 $root = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent (Split-Path -Parent $scriptDir)) '.'))
 if (-not $Path) { $Path = @($root) }
 
-$extensions = @('.jsx', '.js', '.json', '.md', '.ps1', '.txt', '.gitignore', '.gitattributes', '.clinerules', '.yml', '.yaml')
-$skipFolders = @('.git', 'archive\original', 'temp', 'logs')
+$extensions = @('.jsx', '.js', '.py', '.json', '.md', '.ps1', '.txt', '.gitignore', '.gitattributes', '.clinerules', '.yml', '.yaml', '.ini', '.toml')
+$skipFolders = @('.git', '.venv', 'venv', 'archive\original', 'temp', 'logs', 'runtime', 'node_modules', '.pytest_cache', '__pycache__')
 
 function Is-Skipped([string]$full) {
     foreach ($s in $skipFolders) {

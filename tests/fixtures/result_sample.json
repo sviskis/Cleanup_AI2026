@@ -1,0 +1,19 @@
+{
+  "schema": "pdf_ai_batch/job_result/v1",
+  "run_id": "20260923-160000-abc123",
+  "job_id": "manual_p017",
+  "status": "OK",
+  "page": 17,
+  "output": "C:/JOB/AI_OUT/manual__017.ai",
+  "objects_copied": 241,
+  "stats": {
+    "safe_groups_ungrouped": 19,
+    "risky_groups_preserved": 0,
+    "vector_masks_released": 3,
+    "risky_masks_preserved": 1,
+    "mask_paths_deleted": 1,
+    "crop_perimeters_deleted": 6,
+    "short_crop_marks_deleted": 2,
+    "crop_objects_deleted": 8
+  }
+}

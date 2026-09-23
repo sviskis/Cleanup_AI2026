@@ -2,50 +2,49 @@
 
 ## P0 - Critical
 
-- [ ] Run the smoke cases S1-S5 and functional cases F1-F10 (`docs/TESTING.md`) in
-      Illustrator on a test JOB. The automated level is green, but the new module
-      split has never been executed by Illustrator yet.
-- [ ] Run the reference comparison R1-R5 against
-      `archive/original/PDF_Deep_Cleanup_AI_Template_BATCH.jsx` and record the
-      result in `STATUS.md` / `CHANGELOG.md`.
-- [ ] Confirm that the MASTER template file is untouched after a batch (hash or
-      modification time before/after).
+- [ ] Run the one page milestone in Illustrator (`MIGRATION_PLAN.md` §3) and
+      record the outcome in `STATUS.md`. Everything except this is verified
+      automatically.
+- [ ] Test a real `.ait` template end to end (`template_mode = "saveas"`), so the
+      Illustrator side conversion path is proven, not just implemented.
+- [ ] Regression R1-R5 (`docs/TESTING.md` §2) against
+      `legacy/current_working_v10.jsx` on the same job.
 
 ## P1 - Important
 
-- [ ] Add a `TODO`-driven cleanup of the loose legacy files in the project root
-      (`PDF_Deep_Cleanup_AI_Template_BATCH.jsx`, `PDF_Deep_Cleanup_AI_Template_BATCH\`)
-      once the archived copies are confirmed sufficient. They are currently
-      git-ignored but kept on disk.
-- [ ] Verify the tile/stacking order after `duplicateSourceLayersIntoArtwork` on a
-      complex PDF (F4/R3) and document the expected order.
-- [ ] Add a `services/ArchiveService.jsx` that zips `AI_OUT` after a run (handoff).
-- [ ] Unit test `isSafeToUngroup` / `isSafeVectorClippingGroup` decision tables by
-      extending `tests/jscript/stubs.js` with a fake item model.
+- [ ] Queue + state (`pdf_ai_batch/core/state.py`): `state.json` with atomic
+      writes, WAITING / RUNNING / DONE / ERROR / SKIPPED, `RUNNING` recovered to
+      `INTERRUPTED` (or `ERROR_RECOVERABLE`) after a restart, CONTINUE, retry
+      errors, stop after the current page.
+- [ ] `DONE` only when the worker returned a matching `OK` **and** the output AI
+      exists (already the rule in `run_one`, to be enforced by the queue).
+- [ ] Batch summary at the end: DONE / SKIPPED / ERROR counts plus aggregated
+      statistics, written to the batch log.
+- [ ] Multi PDF queue in one run (each PDF with its own page plan).
 
 ## P2 - Improvements
 
-- [ ] Migrate the 12 month calendar pipeline of
-      `archive/original/PDF_Deep_Cleanup_12_MENESI_GUI_v6.jsx`: template modes
-      (one template / template per month / layer per month), month checkboxes,
-      `config\project_info.json`, "SAKĀRTOT JOB SAKNI".
-- [ ] Python + win32com helper: launch Illustrator, run `src/Main.jsx` headless
-      with `dryRun = true`, collect `logs/project.log`, attach `screenshot.png`
-      into the error report folder.
-- [ ] Optional JSON config input: a small ExtendScript `JsonReader` so
-      `config/default_config.json` can override `Config.jsx`.
-- [ ] Diagnostics: optionally write the report to `logs/diagnostics_<ts>.txt`.
-- [ ] Page count: remember the last used PDF folder per project (small state file
-      in `logs/`).
+- [ ] Tkinter GUI (`pdf_ai_batch/gui/`): PROJECT, PDF, MAPPING (ttk.Treeview with
+      PAGE / USE / TEMPLATE / LAYER / OUTPUT / STATUS), RUN tabs with progress and
+      live log.
+- [ ] Mapping actions: select all / none / invert, enable / disable selected,
+      auto assign templates, assign template manually, move up / down, refresh,
+      validate config, run selected, run all enabled.
+- [ ] Richer `config.json` workflow: save/load per JOB, remember the last job,
+      "add PDF", "add templates" buttons.
+- [ ] Preflight report inside the GUI before RUN (same checks as
+      `core/validation.py`).
+- [ ] Worker heartbeat / progress for very slow pages (optional status file).
 
 ## P3 - Future ideas
 
-- [ ] SQLite (via a Python helper) history of every processed page: input, output,
-      cleanup counters, duration.
-- [ ] Batch resume: skip already existing outputs automatically on a second pass
-      (today they are reported as `SKIP`, which is already close).
-- [ ] Profile presets ("conservative" / "aggressive" cleanup) as
-      `config/profiles/*.jsx`.
-- [ ] InDesign handoff: place the produced AI files into an INDD layout through an
-      `indd_bridge` style COM script.
-- [ ] Localisation of the GUI (LV/EN) through a small string table.
+- [ ] SQLite history of every processed page (input, output, statistics, duration)
+      through a small Python layer.
+- [ ] ZIP handoff of `AI_OUT` after a batch.
+- [ ] Cleanup profiles ("conservative" / "aggressive") read from
+      `config/profiles/*.json`.
+- [ ] Error screenshot helper (win32com + Pillow) writing `screenshot.png` into the
+      legacy `logs/errors/<timestamp>/` folder.
+- [ ] Migrate the 12 month calendar pipeline of
+      `archive/original/PDF_Deep_Cleanup_12_MENESI_GUI_v6.jsx` as an optional mode.
+

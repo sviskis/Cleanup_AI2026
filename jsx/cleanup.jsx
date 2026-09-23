@@ -1,47 +1,67 @@
 /*
-    PDF Deep Cleanup AI 2026
-    Module: src/core/PdfCleanup.jsx
+    PDF DEEP CLEANUP AI 2026
+    Module: jsx/cleanup.jsx
 
-    Purpose:
-      The PDF Deep Cleanup v6 engine (APPEARANCE SAFE). This is the core value
-      of the project: it removes the technical PDF junk Illustrator brings in
-      with a PDF page, without touching the appearance of real artwork.
+    SINGLE SOURCE OF TRUTH for Illustrator document handling in this project.
 
-      Order of operations (identical to the reference script):
-        1. unlock all layers and items
-        2. ungroup only groups that are provably safe to ungroup
-        3. release only vector-only clipping masks
-        4. safe ungroup again (mask release can expose new safe groups)
-        5. delete crop mark perimeters and short crop marks
-        6. restore the saved view state (artboard, zoom, centre point)
+    Both consumers use this file, nothing else defines these functions:
+      * jsx/worker.jsx                - the one-page worker for the Python
+                                        orchestrator (uses the global PDFCleanup)
+      * src/Main.jsx                  - the legacy ScriptUI application (includes
+                                        this file; it registers itself into the
+                                        PDC namespace, so PDC.PdfCleanup.* works)
 
+    Contents
+      1. the PDF Deep Cleanup v6 engine (APPEARANCE SAFE) - verbatim
+      2. Illustrator document helpers: open a PDF page, safe close, MASTER
+         template copy / .ait -> .ai conversion, ARTWORK layer handling,
+         artwork duplication
+      3. the run() entry point plus the stats contract mapping
+
+    Appearance safety (unchanged from the reference implementation):
       Anything that can carry appearance (raster, placed, mesh, plugin, symbol
       artwork, transparency, opacity, blending, knockout, nested clips) is
       preserved on purpose and only counted in stats.
 
-    Source:
+    Order of operations (identical to the reference script):
+      1. unlock all layers and items
+      2. ungroup only groups that are provably safe to ungroup
+      3. release only vector-only clipping masks
+      4. safe ungroup again (mask release can expose new safe groups)
+      5. delete crop mark perimeters and short crop marks
+      6. restore the saved view state (artboard, zoom, centre point)
+
+    Source of the engine body:
       Extracted unchanged from the reference script
       (PDF_Deep_Cleanup_AI_Template_BATCH.jsx lines 378-771 - the body of the
-       original nested runPdfDeepCleanup()). The nested functions were lifted to
-       module scope; "stats" became a module level variable with resetStats(),
-       which is the same pattern the working v6 GUI script already used.
+       original nested runPdfDeepCleanup()). Nested functions were lifted to
+       module scope; "stats" became a module level variable with resetStats().
+      The document helpers come from the same reference script:
+        openPdfPage                      lines 337-343
+        safeClose, removeIfExists        lines 183-190
+        findOrCreateArtworkLayer         lines 107-117
+        clearArtworkLayer                lines 118-130
+        duplicateSourceLayersIntoArtwork lines 131-155
+        duplicateNestedLayerItems...     lines 156-182
+        copyTemplateToOutput             lines 191-198
 
-      Flag mapping (original local scope -> CONFIG):
-        RELEASE_SAFE_VECTOR_MASKS        -> CONFIG.cleanup.releaseSafeVectorMasks
-        DELETE_CROP_MARKS                -> CONFIG.cleanup.deleteCropMarks
-        ungroupSafeGroups(doc, 40)       -> CONFIG.cleanup.ungroupPasses
-        PRESERVE_IMAGE_STRUCTURES        -> CONFIG.cleanup.preserveImageStructures
-        PRESERVE_TRANSPARENCY_STRUCTURES -> CONFIG.cleanup.preserveTransparencyStructures
-        (the last two are intent flags: the reference code enforced the same
-         behaviour through the "safe only" tests, not through the flags)
+    Flags: run(doc, options) accepts
+        { releaseSafeVectorMasks, deleteCropMarks, ungroupPasses }
+      with the reference defaults (true, true, 40). No CONFIG dependency, so the
+      file works stand-alone inside the worker.
 
-      No alert() and no confirm() is used - the engine is batch safe and returns
-      its result through the stats object.
-
-    ExtendScript: ES3 safe.
+    ExtendScript: ES3 safe. No alert(), no confirm(), batch safe.
 */
 
-PDC.registerModule("PdfCleanup", (function () {
+var PDFCleanup = (function () {
+
+    var DEFAULT_LAYER_NAME = "ARTWORK";
+
+    var DEFAULT_OPTIONS = {
+        releaseSafeVectorMasks: true,
+        deleteCropMarks: true,
+        ungroupPasses: 40
+    };
 
     var stats = null;
 
@@ -451,16 +471,27 @@ PDC.registerModule("PdfCleanup", (function () {
             } catch(e) {}
         }
     }
-    /* ---- run ----
-       Original order of operations from the reference script (lines 773-785). */
+    /* ======================================================================
+       RUN
+       Original order of operations from the reference script (lines 773-785).
+       ====================================================================== */
 
-    function run(doc) {
+    function normalizeOptions(options) {
+        var o = options ? options : {};
+        var out = {};
+        out.releaseSafeVectorMasks = (o.releaseSafeVectorMasks === undefined)
+            ? DEFAULT_OPTIONS.releaseSafeVectorMasks : (o.releaseSafeVectorMasks === true);
+        out.deleteCropMarks = (o.deleteCropMarks === undefined)
+            ? DEFAULT_OPTIONS.deleteCropMarks : (o.deleteCropMarks === true);
+        out.ungroupPasses = (o.ungroupPasses === undefined)
+            ? DEFAULT_OPTIONS.ungroupPasses : o.ungroupPasses;
+        return out;
+    }
+
+    function run(doc, options) {
         if (!doc) throw new Error("PdfCleanup.run: nav dokumenta.");
 
-        var flags = PDC.CONFIG.cleanup;
-        var RELEASE_SAFE_VECTOR_MASKS = flags.releaseSafeVectorMasks;
-        var DELETE_CROP_MARKS = flags.deleteCropMarks;
-        var passes = flags.ungroupPasses;
+        var flags = normalizeOptions(options);
 
         resetStats();
 
@@ -468,15 +499,15 @@ PDC.registerModule("PdfCleanup", (function () {
 
         unlockAll(doc);
 
-        ungroupSafeGroups(doc, passes);
+        ungroupSafeGroups(doc, flags.ungroupPasses);
 
-        if (RELEASE_SAFE_VECTOR_MASKS) {
+        if (flags.releaseSafeVectorMasks) {
             releaseSafeVectorClippingMasks(doc);
         }
 
-        ungroupSafeGroups(doc, passes);
+        ungroupSafeGroups(doc, flags.ungroupPasses);
 
-        if (DELETE_CROP_MARKS) {
+        if (flags.deleteCropMarks) {
             deleteCropPerimeterObjects(doc);
             deleteShortCropMarks(doc);
         }
@@ -497,10 +528,173 @@ PDC.registerModule("PdfCleanup", (function () {
                " crop=" + (s.cropPerimetersDeleted + s.shortCropMarksDeleted);
     }
 
+    /* ======================================================================
+       DOCUMENT / TEMPLATE / ARTWORK HELPERS
+       Extracted from the same reference script (line numbers in the header).
+       These are the ONLY definitions of this behaviour in the project.
+       ====================================================================== */
+
+    function openPdfPage(pdfFile, pageNo) {
+        var opts = app.preferences.PDFFileOptions;
+        try { opts.pageToOpen = pageNo; } catch(e0) {}
+        try { opts.pageRangeToOpen = String(pageNo); } catch(e1) {}
+        try { opts.placeAsLinks = false; } catch(e2) {}
+        return app.open(pdfFile);
+    }
+
+    function safeClose(doc, saveOption) {
+        if (!doc) return;
+        try { doc.close(saveOption); } catch(e) {}
+    }
+
+    function findOrCreateArtworkLayer(doc, layerName) {
+        var name = layerName ? layerName : DEFAULT_LAYER_NAME;
+        var lyr = null;
+        try { lyr = doc.layers.getByName(name); } catch(e) {}
+        if (!lyr) {
+            lyr = doc.layers.add();
+            lyr.name = name;
+        }
+        try { lyr.visible = true; } catch(e2) {}
+        try { lyr.locked = false; } catch(e3) {}
+        return lyr;
+    }
+
+    function clearArtworkLayer(layer) {
+        try {
+            for (var i = layer.pageItems.length - 1; i >= 0; i--) {
+                var it = layer.pageItems[i];
+                try { if (it.parent === layer) it.remove(); } catch(e) {}
+            }
+        } catch(e2) {}
+        try {
+            for (var j = layer.layers.length - 1; j >= 0; j--) {
+                try { layer.layers[j].remove(); } catch(e3) {}
+            }
+        } catch(e4) {}
+    }
+
+    function duplicateSourceLayersIntoArtwork(sourceDoc, artworkLayer) {
+        var count = 0;
+        sourceDoc.activate();
+        for (var li = sourceDoc.layers.length - 1; li >= 0; li--) {
+            var srcLayer = sourceDoc.layers[li];
+            try { srcLayer.locked = false; } catch(e0) {}
+            try { srcLayer.visible = true; } catch(e1) {}
+            var directItems = [];
+            try {
+                for (var pi = 0; pi < srcLayer.pageItems.length; pi++) {
+                    var item = srcLayer.pageItems[pi];
+                    if (item.parent === srcLayer) directItems.push(item);
+                }
+            } catch(e2) {}
+            for (var i = directItems.length - 1; i >= 0; i--) {
+                var srcItem = directItems[i];
+                try {
+                    srcItem.duplicate(artworkLayer, ElementPlacement.PLACEATBEGINNING);
+                    count++;
+                } catch(e4) {}
+            }
+            count += duplicateNestedLayerItemsIntoArtwork(srcLayer, artworkLayer);
+        }
+        return count;
+    }
+
+    function duplicateNestedLayerItemsIntoArtwork(parentLayer, artworkLayer) {
+        var count = 0;
+        var childLayers = [];
+        try {
+            for (var l = 0; l < parentLayer.layers.length; l++) childLayers.push(parentLayer.layers[l]);
+        } catch(e0) { return 0; }
+        for (var li = childLayers.length - 1; li >= 0; li--) {
+            var srcLayer = childLayers[li];
+            try { srcLayer.locked = false; } catch(e1) {}
+            try { srcLayer.visible = true; } catch(e2) {}
+            var directItems = [];
+            try {
+                for (var pi = 0; pi < srcLayer.pageItems.length; pi++) {
+                    var item = srcLayer.pageItems[pi];
+                    if (item.parent === srcLayer) directItems.push(item);
+                }
+            } catch(e3) {}
+            for (var i = directItems.length - 1; i >= 0; i--) {
+                try {
+                    directItems[i].duplicate(artworkLayer, ElementPlacement.PLACEATBEGINNING);
+                    count++;
+                } catch(e5) {}
+            }
+            count += duplicateNestedLayerItemsIntoArtwork(srcLayer, artworkLayer);
+        }
+        return count;
+    }
+
+    function copyTemplateToOutput(templateFile, outputFile, overwrite) {
+        if (outputFile.exists) {
+            if (!overwrite) return false;
+            if (!outputFile.remove()) throw new Error("Nevar pārrakstīt esošo AI: " + outputFile.fsName);
+        }
+        if (!templateFile.copy(outputFile.fsName)) throw new Error("Neizdevās nokopēt MASTER template uz: " + outputFile.fsName);
+        return true;
+    }
+
+    /* .ait (or .ai) template -> real .ai output, converted BY ILLUSTRATOR.
+       Returns the document, which is already saved as the output file. */
+    function saveAsTemplateCopy(templateFile, outputFile, overwrite) {
+        var out = new File(outputFile);
+        if (out.exists) {
+            if (!overwrite) return null;
+            if (!out.remove()) throw new Error("Nevar pārrakstīt esošo AI: " + out.fsName);
+        }
+        var templateDoc = app.open(templateFile);
+        try {
+            templateDoc.saveAs(out);
+        } catch (eSave) {
+            safeClose(templateDoc, SaveOptions.DONOTSAVECHANGES);
+            throw new Error("Neizdevās saglabāt template kā AI: " + out.fsName + " (" + eSave + ")");
+        }
+        return templateDoc;
+    }
+
+    /* ======================================================================
+       BATCH FILE CONTRACT (stats -> JSON) - single source of truth
+       ====================================================================== */
+
+    function statsToContract(s) {
+        var st = s ? s : stats;
+        return {
+            safe_groups_ungrouped: st.safeGroupsUngrouped,
+            risky_groups_preserved: st.riskyGroupsPreserved,
+            vector_masks_released: st.vectorMasksReleased,
+            risky_masks_preserved: st.riskyMasksPreserved,
+            mask_paths_deleted: st.maskPathsDeleted,
+            crop_perimeters_deleted: st.cropPerimetersDeleted,
+            short_crop_marks_deleted: st.shortCropMarksDeleted,
+            crop_objects_deleted: st.cropPerimetersDeleted + st.shortCropMarksDeleted
+        };
+    }
+
     return {
         run: run,
         resetStats: resetStats,
         getStats: function () { return stats; },
-        summaryLine: summaryLine
+        summaryLine: summaryLine,
+        statsToContract: statsToContract,
+        openPdfPage: openPdfPage,
+        safeClose: safeClose,
+        findOrCreateArtworkLayer: findOrCreateArtworkLayer,
+        clearArtworkLayer: clearArtworkLayer,
+        duplicateSourceLayersIntoArtwork: duplicateSourceLayersIntoArtwork,
+        duplicateNestedLayerItemsIntoArtwork: duplicateNestedLayerItemsIntoArtwork,
+        copyTemplateToOutput: copyTemplateToOutput,
+        saveAsTemplateCopy: saveAsTemplateCopy,
+        DEFAULT_LAYER_NAME: DEFAULT_LAYER_NAME
     };
-}()));
+}());
+
+/* The legacy ScriptUI application (src/Main.jsx) includes this file after
+   Namespace.jsx, so it registers into the PDC namespace and keeps using
+   PDC.PdfCleanup.*. The Python worker uses the plain global PDFCleanup and has
+   no PDC object at all. */
+if (typeof PDC !== "undefined" && PDC && PDC.registerModule) {
+    PDC.registerModule("PdfCleanup", PDFCleanup);
+}

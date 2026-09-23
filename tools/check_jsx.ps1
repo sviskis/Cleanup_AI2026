@@ -21,7 +21,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Entry = 'src\Main.jsx',
+    [string[]]$Entry = @('src\Main.jsx', 'jsx\worker.jsx'),
     [switch]$SkipParse
 )
 
@@ -60,41 +60,29 @@ function Resolve-Includes {
 }
 
 Write-Host "=== 1. include resolution ==="
-$seen = New-Object System.Collections.ArrayList
-$ordered = New-Object System.Collections.ArrayList
-$entryFull = Join-Path $root $Entry
-if (-not (Test-Path -LiteralPath $entryFull)) {
-    Fail "entry point not found: $Entry"
-    exit 1
-}
-Resolve-Includes -path $entryFull -seen $seen -ordered $ordered
-Pass ("includes resolved: " + ($ordered.Count - 1) + " modules + entry point")
 
-$expectedFiles = @(
-    'src\config\Config.jsx',
-    'src\utils\Namespace.jsx',
-    'src\utils\Paths.jsx',
-    'src\utils\TextUtils.jsx',
-    'src\services\FileService.jsx',
-    'src\services\LogService.jsx',
-    'src\services\ErrorService.jsx',
-    'src\core\PdfCleanup.jsx',
-    'src\core\PdfPageCount.jsx',
-    'src\core\TemplateManager.jsx',
-    'src\core\OutputManager.jsx',
-    'src\core\BatchRunner.jsx',
-    'src\core\Diagnostics.jsx',
-    'src\ui\BatchWindow.jsx'
-)
-foreach ($rel in $expectedFiles) {
-    $full = [System.IO.Path]::GetFullPath((Join-Path $root $rel))
-    if (-not $seen.Contains($full)) { Fail ("module not reachable from " + $Entry + ": " + $rel) }
+$scanRoots = @((Join-Path $root 'src'), (Join-Path $root 'jsx'))
+$scanFiles = @()
+foreach ($r in $scanRoots) {
+    if (Test-Path -LiteralPath $r) { $scanFiles += @(Get-ChildItem -LiteralPath $r -Recurse -Filter *.jsx) }
 }
-$srcFiles = @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -Filter *.jsx)
-foreach ($f in $srcFiles) {
-    if (-not $seen.Contains($f.FullName)) { Fail ("src module is never included: " + $f.FullName.Substring($root.Length + 1)) }
+
+$seen = New-Object System.Collections.ArrayList
+$entryBundles = @()
+foreach ($e in $Entry) {
+    $entryFull = [System.IO.Path]::GetFullPath((Join-Path $root $e))
+    if (-not (Test-Path -LiteralPath $entryFull)) { Warn ("entry point not found, skipped: " + $e); continue }
+    $ordered = New-Object System.Collections.ArrayList
+    Resolve-Includes -path $entryFull -seen $seen -ordered $ordered
+    Pass ("includes resolved: " + $e + " -> " + ($ordered.Count - 1) + " modules + entry point")
+    $entryBundles += ,@{ name = $e; files = $ordered }
 }
-if ($errors -eq 0) { Pass ("all " + $srcFiles.Count + " src modules are reachable") }
+if ($entryBundles.Count -eq 0) { Fail "no entry point could be resolved"; exit 1 }
+
+foreach ($f in $scanFiles) {
+    if (-not $seen.Contains($f.FullName)) { Fail ("jsx module is never included: " + $f.FullName.Substring($root.Length + 1)) }
+}
+if ($errors -eq 0) { Pass ("all " + $scanFiles.Count + " jsx modules are reachable from an entry point") }
 
 # ---------------------------------------------------------------- 2. bundle
 Write-Host ""
@@ -115,28 +103,30 @@ function Strip-Comments([string]$text) {
     return $t
 }
 
-$bundleParts = New-Object System.Collections.ArrayList
-foreach ($f in $ordered) {
-    $rel = $f.Substring($root.Length + 1)
-    [void]$bundleParts.Add("/* ================= " + $rel + " ================= */")
-    [void]$bundleParts.Add([System.IO.File]::ReadAllText($f))
-}
-$bundle = ($bundleParts -join "`n")
-$bundleFile = Join-Path $tempDir 'verify_bundle.js'
-[System.IO.File]::WriteAllText($bundleFile, $bundle, (New-Object System.Text.UTF8Encoding($false)))
-Pass ("bundle written: temp\verify_bundle.js  (" + $bundle.Length + " chars)")
-
-if (-not $SkipParse) {
-    $parse = & cscript //nologo //E:JScript (Join-Path $scriptDir 'jscript_parse.js') $bundleFile 2>&1
-    $parseText = ($parse | Out-String)
-    if ($parseText -match 'PARSE_OK') {
-        Pass "ExtendScript/JScript parse OK"
-    } else {
-        Fail ("parse failed: " + $parseText.Trim())
+foreach ($b in $entryBundles) {
+    $bundleParts = New-Object System.Collections.ArrayList
+    foreach ($f in $b.files) {
+        $rel = $f.Substring($root.Length + 1)
+        [void]$bundleParts.Add("/* ================= " + $rel + " ================= */")
+        [void]$bundleParts.Add([System.IO.File]::ReadAllText($f))
     }
-} else {
-    Warn "parse skipped (-SkipParse)"
+    $bundle = (($bundleParts -join "`n") -replace "`r`n", "`n")
+    $bundleName = 'verify_' + ([System.IO.Path]::GetFileNameWithoutExtension($b.name)) + '.js'
+    $bundleFile = Join-Path $tempDir $bundleName
+    [System.IO.File]::WriteAllText($bundleFile, $bundle, (New-Object System.Text.UTF8Encoding($false)))
+    Pass ("bundle written: temp\" + $bundleName + "  (" + $bundle.Length + " chars)")
+
+    if (-not $SkipParse) {
+        $parse = & cscript //nologo //E:JScript (Join-Path $scriptDir 'jscript_parse.js') $bundleFile 2>&1
+        $parseText = ($parse | Out-String)
+        if ($parseText -match 'PARSE_OK') {
+            Pass ("ExtendScript/JScript parse OK: " + $b.name)
+        } else {
+            Fail ("parse failed for " + $b.name + ": " + $parseText.Trim())
+        }
+    }
 }
+if ($SkipParse) { Warn "parse skipped (-SkipParse)" }
 
 # ---------------------------------------------------------------- 3. ES3 scan
 Write-Host ""
@@ -171,9 +161,19 @@ $softPatterns = @{
     '\.includes\s*\('  = 'String.includes (ES6)'
 }
 
-$scannedFiles = @($srcFiles)
+$scannedFiles = @($scanFiles)
 $hardHits = 0
 $softHits = 0
+
+# JSON is an ES5 global, but this project ships its own polyfill (jsx/json2.js).
+# When the polyfill is part of a bundle, JSON.* in the worker is expected.
+$jsonProvided = $false
+foreach ($b in $entryBundles) {
+    foreach ($bf in $b.files) {
+        if ([System.IO.Path]::GetFileName($bf) -eq 'json2.js') { $jsonProvided = $true }
+    }
+}
+
 foreach ($f in $scannedFiles) {
     $rel = $f.FullName.Substring($root.Length + 1)
     $code = Strip-CommentsAndStrings ([System.IO.File]::ReadAllText($f.FullName))
@@ -185,20 +185,22 @@ foreach ($f in $scannedFiles) {
     }
     foreach ($p in $softPatterns.Keys) {
         if ($code -match $p) {
+            if ($jsonProvided -and $softPatterns[$p] -like 'JSON*') { continue }
             Warn ($rel + ": verify support in ExtendScript -> " + $softPatterns[$p])
             $softHits++
         }
     }
 }
 if ($hardHits -eq 0) { Pass ("no forbidden ES5+/ES6 syntax in " + $scannedFiles.Count + " files") }
-if ($softHits -eq 0) { Pass "no ES5+ array/string helpers found" }
+if ($softHits -eq 0) { Pass "no unexpected ES5+ array/string helpers found" }
+if ($jsonProvided) { Pass "JSON.* is available: jsx/json2.js polyfill is part of the worker bundle" }
 
 # ---------------------------------------------------------------- 4. PDC wiring
 Write-Host ""
 Write-Host "=== 4. module API wiring (PDC.<Module>.<member>) ==="
 
 $moduleApi = @{}
-foreach ($f in $srcFiles) {
+foreach ($f in $scanFiles) {
     $text = Strip-Comments ([System.IO.File]::ReadAllText($f.FullName))
     $m = [regex]::Match($text, 'registerModule\(\s*"([^"]+)"')
     if (-not $m.Success) { continue }

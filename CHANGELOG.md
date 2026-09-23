@@ -9,6 +9,87 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 - nothing yet
 
+## [0.2.0] - 2026-09-23
+
+Migration to a **Python orchestrator + Illustrator JSX worker**, without
+rewriting the working cleanup algorithm.
+
+### Added
+
+- `jsx/cleanup.jsx` - the canonical Illustrator engine: the cleanup v6 body
+  (appearance safe) plus all document helpers (open PDF page, safe close, MASTER
+  template copy, `.ait` -> `.ai` conversion, ARTWORK layer, artwork duplication)
+  and `statsToContract`. Extracted from the reference script by line range.
+- `jsx/json2.js` - ES3 JSON polyfill (`JSON.stringify` / `JSON.parse`) with a
+  positioned error message; installs itself only when Illustrator lacks JSON.
+- `jsx/worker.jsx` - one page per invocation: reads `runtime/current_job.json`,
+  validates it, opens the PDF page, cleans up, prepares the output AI, transfers
+  the artwork, saves, closes both documents, writes the result JSON, and always
+  produces a result even for a broken request.
+- `pdf_ai_batch/` Python package:
+  - `core/project.py` (JOB folders and paths), `core/pdf_info.py` (discovery,
+    natural sort, **PyMuPDF page count with a pypdf fallback**),
+    `core/template_mapper.py` (natural sort, positional mapping, master
+    exclusion, default fallback), `core/naming.py` (`manual__017.ai` naming, job
+    ids, collisions), `core/config.py` (`config.json` validation + atomic save),
+    `core/contract.py` (request/result schemas, stats mapping, summaries),
+    `core/validation.py` (preflight), `core/jsonio.py` (atomic IO and
+    `wait_for_json`).
+  - `adapters/illustrator.py` - the only COM code: attach to a running
+    Illustrator, launch when needed, file based handoff (no business data through
+    COM), result accepted only on matching `job_id` + `run_id`, timeout with the
+    worker log tail, scoped `close_documents`.
+  - `run_one.py` - the one page milestone command; `app.py` - CLI entry with
+    `--diagnose`, `--health`, `--run-one`.
+  - `logging_setup.py` - `LOG/app.log` + `LOG/batch_<timestamp>.log`, UTF-8
+    console (Windows code page switched to 65001).
+- `tools/freeze_legacy.ps1`, `tools/make_demo_job.py`, `tests/fixtures/*.json`,
+  `tests/jscript/test_json_contract.js`, the Python test suite (80 tests) and the
+  adapter handshake tests that run without Illustrator.
+- Documentation: `ARCHITECTURE.md` (rewritten for the hybrid system),
+  `MIGRATION_PLAN.md`, `docs/PYTHON_ENV.md`, updated `README.md`, `STATUS.md`,
+  `TODO.md`, `docs/TESTING.md`, `tools/README.md`.
+
+### Changed
+
+- **Single source of truth for the cleanup engine**: `src/core/PdfCleanup.jsx`
+  was deleted and `src/Main.jsx` now includes `../jsx/cleanup.jsx`. The legacy
+  ScriptUI application registers it into the `PDC` namespace; the worker uses the
+  plain `PDFCleanup` global.
+- `PDFCleanup.run(doc, options)` takes its switches as arguments
+  (`releaseSafeVectorMasks`, `deleteCropMarks`, `ungroupPasses`) with the
+  reference defaults, so the engine no longer depends on `PDC.CONFIG`.
+- The document helpers moved with it: `src/services/FileService.jsx` no longer
+  defines `safeClose`, `src/core/PdfPageCount.jsx` no longer defines
+  `openPdfPage`, `src/core/TemplateManager.jsx` keeps only template discovery, and
+  `src/core/OutputManager.jsx` keeps only naming.
+- `tools/check_jsx.ps1` now validates **both** entry points (`src/Main.jsx` and
+  `jsx/worker.jsx`), scans `src/` and `jsx/`, and treats `JSON.*` as available
+  when `jsx/json2.js` is part of the bundle.
+- `tools/run_tests.ps1` builds the bundle from `jsx/cleanup.jsx` and also runs the
+  JSON contract test.
+- Page counting for the new pipeline is PyMuPDF first, pypdf second - the
+  Illustrator probe stays only in the legacy application.
+- Output naming for the new pipeline is `manual__017.ai` (width
+  `max(3, digits(page_count))`); the legacy `manual_p03.ai` scheme lives on only
+  inside the frozen baseline.
+- Version raised to 0.2.0 (VERSION, `src/config/Config.jsx`,
+  `config/default_config.json`, `src/Main.jsx`).
+
+### Fixed
+
+- The Windows console no longer raises `UnicodeEncodeError` on Latvian text; the
+  code page is set to UTF-8.
+- Directory comparison for `close_documents` normalises path separators, so a COM
+  path with backslashes and a Python path with forward slashes compare correctly.
+- `default_template()` returns the **real** file from the folder listing, so the
+  configured default keeps the case the file has on disk.
+- Natural sorting now has documented, deterministic tie-breaks: digit runs sort
+  before letter runs, numbers compare numerically first, and equal numbers fall
+  back to the raw text (`02` before `2`).
+- `pywin32` is imported only inside the adapter, so every other Python module
+  stays usable (and testable) without COM.
+
 ## [0.1.0] - 2026-09-23
 
 First version of the structured project. The reference script

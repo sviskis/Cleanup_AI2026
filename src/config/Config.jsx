@@ -21,7 +21,7 @@ PDC.CONFIG = {
 
     projectName: "PDF Deep Cleanup AI 2026",
     appName: "PDF Deep Cleanup → AI Template Batch",
-    version: "0.1.0",
+    version: "0.2.0",
 
     /* --- behaviour switches, plan phases 16 and 17 --- */
     debug: false,

@@ -316,28 +316,32 @@ PDC.registerModule("BatchRunner", (function () {
                 var templateCopied = false;
 
                 try {
-                    sourceDoc = PDC.PdfPageCount.openPdfPage(pdfFile, job.pageNo);
+                    sourceDoc = PDC.PdfCleanup.openPdfPage(pdfFile, job.pageNo);
                     sourceDoc.activate();
 
                     /* v6 cleanup - bez alert, tikai stats */
-                    var fileStats = PDC.PdfCleanup.run(sourceDoc);
+                    var fileStats = PDC.PdfCleanup.run(sourceDoc, {
+                        releaseSafeVectorMasks: PDC.CONFIG.cleanup.releaseSafeVectorMasks,
+                        deleteCropMarks: PDC.CONFIG.cleanup.deleteCropMarks,
+                        ungroupPasses: PDC.CONFIG.cleanup.ungroupPasses
+                    });
 
-                    templateCopied = PDC.OutputManager.copyTemplateToOutput(state.templateFile, outputFile, overwrite);
+                    templateCopied = PDC.PdfCleanup.copyTemplateToOutput(state.templateFile, outputFile, overwrite);
                     if (!templateCopied) throw new Error("Output AI jau eksistē.");
 
                     destDoc = app.open(outputFile);
                     destDoc.activate();
 
-                    var artworkLayer = PDC.TemplateManager.findOrCreateArtworkLayer(destDoc);
-                    if (clearArtwork) PDC.TemplateManager.clearArtworkLayer(artworkLayer);
+                    var artworkLayer = PDC.PdfCleanup.findOrCreateArtworkLayer(destDoc, PDC.CONFIG.artworkLayerName);
+                    if (clearArtwork) PDC.PdfCleanup.clearArtworkLayer(artworkLayer);
 
-                    var copiedObjects = PDC.TemplateManager.duplicateSourceLayersIntoArtwork(sourceDoc, artworkLayer);
+                    var copiedObjects = PDC.PdfCleanup.duplicateSourceLayersIntoArtwork(sourceDoc, artworkLayer);
 
                     destDoc.activate();
                     destDoc.save();
 
-                    PDC.FileService.safeClose(sourceDoc, SaveOptions.DONOTSAVECHANGES);
-                    PDC.FileService.safeClose(destDoc, SaveOptions.SAVECHANGES);
+                    PDC.PdfCleanup.safeClose(sourceDoc, SaveOptions.DONOTSAVECHANGES);
+                    PDC.PdfCleanup.safeClose(destDoc, SaveOptions.SAVECHANGES);
 
                     okCount++;
                     view.addLog("OK    " + decodeURI(pdfFile.name) + " | lapa " + job.pageNo + "/" + job.pageCount +
@@ -349,8 +353,8 @@ PDC.registerModule("BatchRunner", (function () {
 
                 } catch (err) {
                     errorCount++;
-                    PDC.FileService.safeClose(sourceDoc, SaveOptions.DONOTSAVECHANGES);
-                    PDC.FileService.safeClose(destDoc, SaveOptions.DONOTSAVECHANGES);
+                    PDC.PdfCleanup.safeClose(sourceDoc, SaveOptions.DONOTSAVECHANGES);
+                    PDC.PdfCleanup.safeClose(destDoc, SaveOptions.DONOTSAVECHANGES);
                     if (templateCopied && outputFile.exists) PDC.FileService.removeIfExists(outputFile);
                     view.addLog("ERROR " + decodeURI(pdfFile.name) + " | lapa " + job.pageNo + " | " + err);
                     PDC.ErrorService.handleError(err, {
