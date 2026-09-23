@@ -40,8 +40,14 @@ class JobProject:
 
     @classmethod
     def open(cls, root: str | Path, create: bool = True) -> "JobProject":
-        """Open (and optionally create) a JOB folder."""
-        project = cls(Path(root).expanduser())
+        """Open (and optionally create) a JOB folder.
+
+        The root is resolved to an absolute path, so everything derived from it
+        (PDF/, TEMPLATE/, AI_OUT/, ...) is absolute as well. The request JSON must
+        never depend on the current working directory: the worker runs inside
+        Illustrator, which has its own cwd.
+        """
+        project = cls(Path(root).expanduser().resolve())
         if create:
             project.ensure_structure()
         elif not project.root.is_dir():

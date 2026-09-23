@@ -13,10 +13,21 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
 - **JSON is the only contract.** Business data never travels through COM
   arguments; use `runtime/current_job.json` and `runtime/current_result.json`
   (both written atomically, accepted only when `job_id` **and** `run_id` match).
+- **Contract paths are absolute, forward slashed, and resolved by Python only.**
+  `pdf`, `template` and `output` go through `core/contract.contract_path`
+  (`Path.resolve().as_posix()`); `validate_request` rejects a relative path. JSX
+  never resolves or joins paths - it validates that they are absolute and exist
+  (`pdf`, `template`, and `output` when `template_mode == "copy"`), because
+  Illustrator runs with its own current working directory.
 - **COM lives only in `pdf_ai_batch/adapters/illustrator.py`.**
 - **ES3 only in JSX.** No `let`, `const`, arrow functions, `async`/`await`,
   `class`, `import`/`export`, `Promise`, template literals, spread/rest, optional
   chaining. Use `var`, `function`, `try/catch`.
+- **`jsx/*.jsx` and `jsx/*.js` are pure ASCII** - write Latvian as `\uXXXX`
+  escapes. ExtendScript decodes a large BOM-less UTF-8 `.jsx` as ANSI, so raw
+  non-ASCII literals arrive as mojibake in the worker result. `check_jsx.ps1`
+  enforces ASCII, no BOM and LF in `jsx/`; keep PowerShell tools that contain
+  non-ASCII BOM encoded (see `tools/README.md` "Encoding rule").
 - **Never overwrite the MASTER template.** Python copies `.ai` templates; for
   `.ait` the worker opens the template and saves **as** the output.
 - **Always close the source PDF without saving.**
@@ -36,9 +47,11 @@ powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1
 ```
 
 `check_jsx.ps1` compiles both entry points with the WSH JScript engine (the same
-ES3 syntax family as ExtendScript), scans for forbidden syntax and verifies every
-`PDC.<Module>.<member>` reference. `run_tests.ps1` runs the JSX unit tests plus
-the JSON contract tests. `pytest` covers all Python logic without Illustrator.
+ES3 syntax family as ExtendScript), scans for forbidden syntax, verifies every
+`PDC.<Module>.<member>` reference and checks the `jsx/` source encoding (ASCII
+only, no BOM, LF). `run_tests.ps1` runs the JSX unit tests plus the JSON contract
+tests. `pytest` covers all Python logic without Illustrator (including the
+absolute path contract and the encoding guards).
 
 ## Workflow
 

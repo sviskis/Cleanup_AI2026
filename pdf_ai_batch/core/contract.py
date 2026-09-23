@@ -16,7 +16,9 @@ sides (pytest + tests/jscript/test_json_contract.js).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable
 
 REQUEST_SCHEMA = "pdf_ai_batch/job_request/v1"
@@ -62,6 +64,34 @@ REQUEST_REQUIRED_KEYS = (
     "clear_layer",
     "overwrite",
 )
+
+# the fields that always carry a resolved absolute path
+CONTRACT_PATH_KEYS = ("pdf", "template", "output")
+
+_DRIVE_LETTER_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def contract_path(value: str | Path) -> str:
+    """Absolute path with forward slashes - the only form used on the wire.
+
+    Python owns path resolution (.clinerules). The worker runs inside Illustrator
+    with a different current working directory, so a relative path in the request
+    would point somewhere else and ``File(request.pdf).exists`` would be false.
+    ``Path.resolve()`` makes the field independent of the cwd of whoever reads it.
+
+        "temp\\JOB\\PDF\\a.pdf" -> "C:/repo/temp/JOB/PDF/a.pdf"
+    """
+    return Path(str(value)).expanduser().resolve().as_posix()
+
+
+def is_absolute_path(value: str | Path | None) -> bool:
+    """True for "C:/job/x", "\\\\server\\share\\x" and "/opt/x" (portable check)."""
+    text = str(value or "")
+    if not text:
+        return False
+    if text.startswith("/") or text.startswith("\\\\"):
+        return True
+    return bool(_DRIVE_LETTER_RE.match(text))
 
 
 @dataclass
@@ -112,16 +142,20 @@ def build_request(
     template_mode: str = TEMPLATE_MODE_COPY,
     cleanup: dict | None = None,
 ) -> dict:
-    """Build one page request for the worker."""
+    """Build one page request for the worker.
+
+    `pdf`, `template` and `output` are resolved to absolute forward slash paths
+    here, so the request never depends on a current working directory.
+    """
     return {
         "schema": REQUEST_SCHEMA,
         "run_id": run_id,
         "job_id": job_id,
-        "pdf": str(pdf),
+        "pdf": contract_path(pdf),
         "page": int(page),
-        "template": str(template),
+        "template": contract_path(template),
         "template_mode": template_mode,
-        "output": str(output),
+        "output": contract_path(output),
         "layer": layer or LAYER_DEFAULT,
         "clear_layer": bool(clear_layer),
         "overwrite": bool(overwrite),
@@ -145,6 +179,11 @@ def validate_request(request: dict | None) -> list[str]:
     page = request.get("page")
     if not isinstance(page, int) or page < 1:
         problems.append(f"page nav derīgs lappuses numurs: {page!r}")
+
+    for key in CONTRACT_PATH_KEYS:
+        value = request.get(key)
+        if value and not is_absolute_path(value):
+            problems.append(f"{key} nav absolūts ceļš (Python to atrisina): {value!r}")
 
     mode = request.get("template_mode")
     if mode not in (TEMPLATE_MODE_COPY, TEMPLATE_MODE_SAVEAS):

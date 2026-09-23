@@ -4,9 +4,10 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
 
 ## P0 - Critical
 
-- [ ] Run the one page milestone in Illustrator (`MIGRATION_PLAN.md` §3) and
-      record the outcome in `STATUS.md`. Everything except this is verified
-      automatically.
+- [x] Run the one page milestone in Illustrator (`MIGRATION_PLAN.md` §3) and
+      record the outcome in `STATUS.md`.
+      Done: `temp\REAL_TEST` (14 page PDF, page 3) and a Latvian job folder both
+      returned `Statuss : OK` / `MILESTONE OK`.
 - [ ] Test a real `.ait` template end to end (`template_mode = "saveas"`), so the
       Illustrator side conversion path is proven, not just implemented.
 - [ ] Regression R1-R5 (`docs/TESTING.md` §2) against
@@ -26,6 +27,10 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
 
 ## P2 - Improvements
 
+- [ ] Escape non-ASCII text in the legacy GUI modules (`src/**/*.jsx`) the same way
+      as in `jsx/` (`\uXXXX`), so the ScriptUI labels cannot be mis-decoded either.
+      Deliberately out of scope for the contract milestone: `src/` is loaded by the
+      GUI entry point, not by the Python worker.
 - [ ] Tkinter GUI (`pdf_ai_batch/gui/`): PROJECT, PDF, MAPPING (ttk.Treeview with
       PAGE / USE / TEMPLATE / LAYER / OUTPUT / STATUS), RUN tabs with progress and
       live log.

@@ -7,8 +7,53 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
 
 ## [Unreleased]
 
+### Added
+
+- `pdf_ai_batch/tests/test_request_paths.py` - the request must carry absolute
+  paths: a relative `--job` path, spaces, Latvian characters, a OneDrive style
+  location, all three fields absolute, and independence from the current working
+  directory.
+- `pdf_ai_batch/tests/test_encoding.py` - `jsx/` sources are pure ASCII (no BOM,
+  LF), no cp1252 mojibake anywhere in the text sources, request JSON, result JSON
+  and the worker log are UTF-8 in both directions, and the worker keeps its strict
+  path validation.
+- `tools/check_jsx.ps1` check 5: every file in `jsx/` must be ASCII only, without a
+  BOM and with LF line endings - Illustrator decodes a large BOM-less `.jsx` as
+  ANSI, so a raw Latvian literal inside `jsx/` would be corrupted.
+- `run_one` now prints and logs the final absolute request paths
+  (`--- galīgie pieprasījuma ceļi (absolūti) ---`) before Illustrator is invoked,
+  so every run is auditable.
+
+### Fixed
+
+- **End to end contract bug: relative paths in `runtime/current_job.json`.**
+  `run_one` wrote `temp\REAL_TEST\PDF\mans_fails.pdf` (relative to the shell's
+  working directory). `jsx/worker.jsx` runs inside Illustrator, which has its own
+  current directory, so `File(request.pdf).exists` was false for `pdf`, `template`
+  and `output` and every job ended as `INVALID_REQUEST`. Verified with two real
+  runs: `temp\REAL_TEST` (14 page PDF, page 3) and a Latvian job folder with a
+  Latvian PDF name - both `Statuss : OK`, output AI written, `MILESTONE OK`.
+- **UTF-8 mojibake in the JSX chain.** ExtendScript decoded the raw Latvian
+  literals of `jsx/worker.jsx` as ANSI, so the worker message in
+  `runtime/current_result.json` was unreadable. `jsx/worker.jsx` and the
+  regenerated `jsx/cleanup.jsx` are now pure ASCII (`\uXXXX` escapes), which no
+  decoder can corrupt, and `tools/check_jsx.ps1` fails on a non-ASCII byte in
+  `jsx/`.
+- **`tools/migrate_extract_sections.ps1` had lost its UTF-8 BOM**, so PowerShell
+  5.1 read its Latvian here-strings as ANSI and wrote mojibake into the generated
+  files (`jsx/cleanup.jsx`, `src/ui/BatchWindow.jsx`). The BOM is restored, the
+  tool escapes its `jsx/` output to ASCII, and both files were regenerated
+  byte-identically apart from the repaired text.
+
 ### Changed
 
+- **The request JSON carries absolute paths with forward slashes.** Python
+  resolves `pdf`, `template` and `output` with `Path.resolve()`
+  (`core.contract.contract_path`), `JobProject.open` resolves the JOB root, and
+  `core.contract.validate_request` rejects a request that still contains a
+  relative path. The worker never resolves or joins paths: it only checks that the
+  path is absolute and that the file exists (strict, including
+  `output exists when template_mode == "copy"`).
 - **Project renamed** to `Cleanup_AI2026` / display name **Cleanup AI 2026**
   (repository `sviskis/Cleanup_AI2026`, local folder `Cleanup_AI2026`).
   All project-name and path references in tracked files were updated in one

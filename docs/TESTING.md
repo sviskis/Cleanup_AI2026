@@ -37,6 +37,20 @@ Pass criteria: `Statuss : OK`, the statistics block, `Output : ir (...)`,
 `MILESTONE OK`, and `runtime\current_result.json` carrying the same `job_id` and
 `run_id` as `runtime\current_job.json`.
 
+Before Illustrator is invoked, the run prints and logs the final request paths
+(`--- galīgie pieprasījuma ceļi (absolūti) ---`). All three (`pdf`, `template`,
+`output`) must be **absolute and forward slashed**, for example
+`C:/Users/.../temp/REAL_TEST/PDF/mans_fails.pdf`. The worker runs with Illustrator's
+own working directory, so a relative path can never resolve - `File(path).exists`
+would be false and the job would end as `INVALID_REQUEST`. Python resolves the
+paths; the worker only validates that they are absolute and that the files exist.
+
+Run the same page once more with a job folder and a PDF name that contain spaces
+and Latvian characters (for example `temp\Realitātes tests LV` with
+`Māja Āčēģī.pdf`). The request JSON, the worker log and the result JSON must show
+those names exactly, with no mojibake: `jsx/` sources are ASCII only (`\uXXXX`
+escapes), because ExtendScript decodes a large BOM-less `.jsx` as ANSI.
+
 See `MIGRATION_PLAN.md` §3 for the full procedure and what to replace first
 (real templates with an `ARTWORK` layer).
 

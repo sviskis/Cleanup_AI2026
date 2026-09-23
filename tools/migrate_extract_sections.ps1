@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Cleanup AI 2026 - module extraction tool
 # ----------------------------------------------------------------------------
 #  Purpose:
@@ -63,6 +63,23 @@ function Indent4([string[]]$body) {
     return $out.ToArray()
 }
 
+function ConvertTo-AsciiEscapes {
+    # Replaces every non-ASCII character with a \uXXXX escape.
+    #
+    # Why: Illustrator decodes a large BOM-less UTF-8 .jsx loaded with
+    # doJavaScriptFile as ANSI (Windows codepage), so Latvian literals arrive as
+    # mojibake inside the running script. ASCII escapes survive any decoder, so
+    # the generated jsx/ output stays pure ASCII and cannot be corrupted.
+    param([string]$Text)
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $Text.ToCharArray()) {
+        $code = [int][char]$ch
+        if ($code -lt 128) { [void]$sb.Append($ch) }
+        else { [void]$sb.AppendFormat('\u{0:x4}', $code) }
+    }
+    return $sb.ToString()
+}
+
 function Write-Module {
     param(
         [string]$RelativePath,
@@ -81,6 +98,8 @@ function Write-Module {
     $joined = $joined -replace "`r`n", "`n"
     $joined = $joined -replace "`r", "`n"
     if ($joined -notmatch "`n$") { $joined = $joined + "`n" }
+    # jsx/ output is executed by ExtendScript: keep it pure ASCII (see above)
+    if ($RelativePath -like 'jsx\*') { $joined = ConvertTo-AsciiEscapes $joined }
     [System.IO.File]::WriteAllText($full, $joined, $enc)
     Write-Host ("WROTE " + $RelativePath + "  <- legacy lines " + $Body.Count)
 }

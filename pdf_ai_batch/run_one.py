@@ -261,6 +261,21 @@ def main(argv: list[str] | None = None) -> int:
         print_line("Kļūda: nederīgs pieprasījums: " + "; ".join(problems))
         return EXIT_USAGE
 
+    # ------------------------------------------------- report the final paths
+    # The worker runs inside Illustrator with its own working directory, so it
+    # only ever sees what is written here: absolute, forward slash paths. Print
+    # them before Illustrator is invoked, so a run is auditable.
+    print_line("--- galīgie pieprasījuma ceļi (absolūti) ---")
+    for key in ("pdf", "template", "output"):
+        print_line(f"{key:<9}: {request[key]}")
+    logger.info(
+        "Pieprasījums: pdf=%s | template=%s | output=%s",
+        request["pdf"],
+        request["template"],
+        request["output"],
+    )
+    print_line("")
+
     if args.dry_run or args.preflight_only:
         jsonio.write_json_atomic(adapter.request_path, request)
         print_line(f"--- pieprasījums ({'dry-run' if args.dry_run else 'preflight-only'}) ---")

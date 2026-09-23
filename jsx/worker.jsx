@@ -29,6 +29,10 @@
                  objects_copied, stats{}, message, error_type
       A result is only valid for Python when job_id AND run_id match.
 
+    Paths in the request (pdf, template, output) are ALWAYS absolute and use
+    forward slashes. Python resolves them before serialising; this script never
+    resolves or joins paths, it only uses what the request carries.
+
     Safety:
       * the MASTER template is never written:
           template_mode "copy"   - Python already copied it to output
@@ -38,7 +42,10 @@
       * overwrite=false is respected even if Python already decided
       * userInteractionLevel is always restored
 
-    ExtendScript: ES3 safe.
+    ExtendScript: ES3 safe. This file must stay PURE ASCII: every non-ASCII
+    character is written as a \uXXXX escape, because Illustrator decodes a large
+    BOM-less UTF-8 .jsx (doJavaScriptFile) as ANSI and Latvian text would arrive
+    as mojibake. tools/check_jsx.ps1 enforces this.
 */
 
 #target illustrator
@@ -149,7 +156,7 @@ function writeResult(resultObj) {
    ====================================================================== */
 
 function errMessage(err) {
-    if (!err) return "Nezināma kļūda";
+    if (!err) return "Nezin\u0101ma k\u013c\u016bda";
     if (err.message) return String(err.message);
     return String(err);
 }
@@ -167,9 +174,9 @@ function errLine(err) {
 function classifyError(err) {
     var m = errMessage(err);
     if (m.indexOf("nav sagatavots") >= 0) return "OUTPUT_MISSING";
-    if (m.indexOf("jau eksistē") >= 0) return "OUTPUT_EXISTS";
+    if (m.indexOf("jau eksist\u0113") >= 0) return "OUTPUT_EXISTS";
     if (m.indexOf("nav atrasts") >= 0) return "MISSING_FILE";
-    if (m.indexOf("saglabāt") >= 0) return "SAVE_FAILED";
+    if (m.indexOf("saglab\u0101t") >= 0) return "SAVE_FAILED";
     return "PROCESSING";
 }
 
@@ -177,34 +184,54 @@ function classifyError(err) {
    REQUEST VALIDATION
    ====================================================================== */
 
+/* The worker accepts ABSOLUTE paths only. Python owns path resolution (.clinerules)
+   and the worker runs with Illustrator's cwd, so a relative path would silently
+   point somewhere else and File(...).exists would be false. */
+function isAbsolutePath(value) {
+    var text = value ? String(value) : "";
+    if (text.length === 0) return false;
+    /* POSIX root ("/opt/job/...") and forward slash UNC ("//server/share/...") */
+    if (text.charAt(0) === "/") return true;
+    /* Windows drive letter: "C:/job/..." or "C:\\job\\..." */
+    return /^[A-Za-z]:[\/\\]/.test(text);
+}
+
+/* One field of the request: absolute, and (when required) an existing file. */
+function checkContractPath(problems, label, value, mustExist, missingText) {
+    if (!value) {
+        problems.push(label);
+        return;
+    }
+    if (!isAbsolutePath(value)) {
+        problems.push(label + " nav absol\u016bts ce\u013c\u0161 (Python to atrisina): " + value);
+        return;
+    }
+    if (mustExist && !(new File(value)).exists) {
+        problems.push(label + " " + missingText + ": " + value);
+    }
+}
+
 function validateRequest(req) {
     var problems = [];
-    if (!req) return ["pieprasījums nav nolasāms"];
+    if (!req) return ["piepras\u012bjums nav nolas\u0101ms"];
 
     if (!req.job_id) problems.push("job_id");
     if (!req.run_id) problems.push("run_id");
     if (!req.page || req.page < 1) problems.push("page");
 
-    if (!req.pdf) {
-        problems.push("pdf");
-    } else if (!(new File(req.pdf)).exists) {
-        problems.push("pdf nav atrasts: " + req.pdf);
-    }
-
-    if (!req.template) {
-        problems.push("template");
-    } else if (!(new File(req.template)).exists) {
-        problems.push("template nav atrasts: " + req.template);
-    }
-
-    if (!req.output) problems.push("output");
-
     var mode = req.template_mode ? req.template_mode : "copy";
     if (mode !== "copy" && mode !== "saveas") problems.push("template_mode: " + mode);
 
-    if (mode === "copy" && req.output && !(new File(req.output)).exists) {
-        problems.push("output nav sagatavots (template_mode=copy): " + req.output);
-    }
+    /* strict: the file has to exist at the ABSOLUTE path the request carries */
+    checkContractPath(problems, "pdf", req.pdf, true, "nav atrasts");
+    checkContractPath(problems, "template", req.template, true, "nav atrasts");
+    checkContractPath(
+        problems,
+        "output",
+        req.output,
+        mode === "copy",
+        "nav sagatavots (template_mode=copy)"
+    );
 
     return problems;
 }
@@ -234,7 +261,7 @@ function processJob(req) {
     /* overwrite is decided by Python, but never trust it blindly */
     if (req.overwrite !== true && mode === "saveas" && outFile.exists) {
         result.status = "SKIP";
-        result.message = "Output jau eksistē un overwrite=false";
+        result.message = "Output jau eksist\u0113 un overwrite=false";
         logLine("SKIP " + req.output);
         return result;
     }
@@ -255,7 +282,7 @@ function processJob(req) {
             destDoc = PDFCleanup.saveAsTemplateCopy(new File(req.template), outFile, req.overwrite === true);
             if (!destDoc) {
                 result.status = "SKIP";
-                result.message = "Output jau eksistē";
+                result.message = "Output jau eksist\u0113";
                 PDFCleanup.safeClose(sourceDoc, SaveOptions.DONOTSAVECHANGES);
                 sourceDoc = null;
                 logLine("SKIP " + req.output);
@@ -313,20 +340,20 @@ function main() {
     try {
         var requestText = readUtf8(requestFile());
         if (!requestText) {
-            result = baseResult(null, "ERROR", "Nav pieprasījuma faila: " + requestFile().fsName, "NO_REQUEST");
+            result = baseResult(null, "ERROR", "Nav piepras\u012bjuma faila: " + requestFile().fsName, "NO_REQUEST");
             logLine("ERROR NO_REQUEST " + requestFile().fsName);
         } else {
             req = JSON.parse(requestText);
             var problems = validateRequest(req);
             if (problems.length > 0) {
-                result = baseResult(req, "ERROR", "Nederīgs pieprasījums: " + problems.join("; "), "INVALID_REQUEST");
+                result = baseResult(req, "ERROR", "Neder\u012bgs piepras\u012bjums: " + problems.join("; "), "INVALID_REQUEST");
                 logLine("ERROR INVALID_REQUEST " + problems.join("; "));
             } else {
                 result = processJob(req);
             }
         }
     } catch (fatal) {
-        result = baseResult(req, "ERROR", "Worker kļūda: " + errMessage(fatal), "WORKER_FATAL");
+        result = baseResult(req, "ERROR", "Worker k\u013c\u016bda: " + errMessage(fatal), "WORKER_FATAL");
         result.error_file = errFile(fatal);
         result.error_line = errLine(fatal);
         logLine("ERROR WORKER_FATAL " + result.message);
@@ -339,6 +366,6 @@ try {
     main();
 } catch (lastResort) {
     try {
-        writeResult(baseResult(null, "ERROR", "Neizdevās pat uzrakstīt rezultātu: " + errMessage(lastResort), "WORKER_FATAL"));
+        writeResult(baseResult(null, "ERROR", "Neizdev\u0101s pat uzrakst\u012bt rezult\u0101tu: " + errMessage(lastResort), "WORKER_FATAL"));
     } catch (eFinal) {}
 }

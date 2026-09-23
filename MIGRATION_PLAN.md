@@ -35,7 +35,7 @@ state with recovery, milestone-first order).
 | 4 | Write `jsx/worker.jsx` (one page per invocation) | **DONE** |
 | 5 | Python core: project, pdf_info, naming, template_mapper, config, contract, validation | **DONE** |
 | 6 | `adapters/illustrator.py` (pywin32, attach -> launch, file handoff, timeout) | **DONE** |
-| 7 | First milestone: one page end to end (`run_one.py`) | **DONE** for the Python half; the Illustrator run is pending (§3) |
+| 7 | First milestone: one page end to end (`run_one.py`) | **DONE** - two real Illustrator runs recorded in `STATUS.md` |
 | 8 | Queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED, resume, continue, retry | **NEXT** |
 | 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **LATER** |
 | 10 | Batch policy: one bad page must not stop the batch, final summary | **NEXT** |
@@ -97,6 +97,20 @@ The Illustrator half needs one real run:
 Expected: `Statuss    : OK`, a statistics block, `Output     : ir (...)`, and
 `MILESTONE OK`, plus `runtime\current_result.json` carrying the same `job_id` and
 `run_id` as the request.
+
+**Status: DONE.** Run on 2026-09-23 against `temp\REAL_TEST` (page 3 of a 14 page
+PDF) and against a job folder with a Latvian name (`temp\Realitātes tests LV`,
+PDF `Māja Āčēģī.pdf`); both returned `Statuss : OK` and `MILESTONE OK`.
+
+Two contract rules the run proved and that every later milestone must keep (see
+`ARCHITECTURE.md` §2 "Paths on the wire" and `docs/TESTING.md` §0):
+
+* the request carries **absolute, forward slash** paths for `pdf`, `template` and
+  `output` - Python resolves them, the worker never does, because Illustrator has
+  its own current working directory;
+* `jsx/` sources are **ASCII only** (`\uXXXX` escapes) - a large BOM-less UTF-8
+  `.jsx` is decoded as ANSI by ExtendScript, which turned the worker's Latvian
+  literals into mojibake in `runtime/current_result.json`.
 
 ## 4. Agreed behaviours not in the code yet
 

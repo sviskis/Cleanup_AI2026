@@ -110,6 +110,15 @@ Two files in `runtime/` (both written atomically: temp file + rename):
 `status` is `OK`, `ERROR` or `SKIP`. On failure the result carries `message`,
 `error_type`, `error_file` and `error_line` instead of statistics.
 
+**Paths on the wire.** `pdf`, `template` and `output` are always **absolute** and
+use forward slashes; Python resolves them (`core.contract.contract_path` ->
+`Path.resolve().as_posix()`) before serialising. The worker runs inside
+Illustrator with its own current working directory, so a relative path would point
+somewhere else and `File(request.pdf).exists` would be false. The JSX side never
+resolves or joins paths: it rejects a path that is not absolute
+(`isAbsolutePath`) and then checks existence (`pdf`, `template`, and `output`
+when `template_mode == "copy"`).
+
 **Handshake rules** (implemented in `core/jsonio.wait_for_json` and the adapter):
 
 1. Python deletes a stale `current_result.json` before every job.

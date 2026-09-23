@@ -235,6 +235,49 @@ foreach ($f in $scannedFiles) {
 }
 if ($refErrors -eq 0) { Pass "all PDC module references resolve to exported members" }
 
+# ------------------------------------------------------- 5. jsx source encoding
+# Illustrator decodes a large BOM-less UTF-8 .jsx loaded with doJavaScriptFile
+# as ANSI, so Latvian literals inside jsx/ would arrive as mojibake in the worker
+# result. jsx/ must therefore stay pure ASCII (\uXXXX escapes), without BOM, LF
+# only. The legacy src/ application is excluded: it is loaded by the GUI entry
+# point and still carries raw Latvian text.
+Write-Host ""
+Write-Host "=== 5. jsx/ source encoding (ASCII only, no BOM, LF) ==="
+
+$jsxDir = Join-Path $root 'jsx'
+$encodingProblems = 0
+$checkedEncoding = 0
+
+if (Test-Path -LiteralPath $jsxDir) {
+    $jsxFiles = @(Get-ChildItem -LiteralPath $jsxDir -File | Where-Object { $_.Extension -in @('.jsx', '.js') })
+    foreach ($f in $jsxFiles) {
+        $rel = $f.FullName.Substring($root.Length + 1)
+        $checkedEncoding++
+        $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            Fail ($rel + ": UTF-8 BOM found, ExtendScript expects no BOM")
+            $encodingProblems++
+        }
+        $high = 0
+        $cr = 0
+        foreach ($b in $bytes) {
+            if ($b -gt 127) { $high++ }
+            if ($b -eq 13) { $cr++ }
+        }
+        if ($high -gt 0) {
+            Fail ($rel + ": " + $high + " non-ASCII byte(s) - use \uXXXX escapes")
+            $encodingProblems++
+        }
+        if ($cr -gt 0) {
+            Fail ($rel + ": CR found - jsx/ files use LF line endings only")
+            $encodingProblems++
+        }
+    }
+    if ($checkedEncoding -gt 0 -and $encodingProblems -eq 0) {
+        Pass ("jsx/ sources are ASCII only, no BOM, LF (" + $checkedEncoding + " files)")
+    }
+}
+
 # ---------------------------------------------------------------- summary
 Write-Host ""
 Write-Host "========================================"

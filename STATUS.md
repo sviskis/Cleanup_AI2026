@@ -2,7 +2,7 @@
 
 Version: 0.2.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Python orchestrator + Illustrator worker implemented and verified by automated gates; the first real Illustrator run of the one page milestone is pending**
+Status: **Python orchestrator + Illustrator worker implemented; the one page end to end milestone now runs successfully inside Illustrator (REAL_TEST + a Latvian path job)**
 
 ## Working
 
@@ -41,12 +41,14 @@ Status: **Python orchestrator + Illustrator worker implemented and verified by a
 
 | Check | Result |
 | --- | --- |
-| `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring) |
+| `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring, `jsx/` ASCII only + no BOM + LF) |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 80 tests (Python 3.14 venv) |
+| `pytest` | 97 tests (Python 3.14 venv), including the absolute path and encoding guards |
 | `app.py --diagnose` | paths and interpreter reported |
 | `run_one --preflight-only` (14 page demo PDF) | 17 checks OK, request JSON written to `runtime/current_job.json` |
 | `run_one --dry-run` | valid contract request produced |
+| **`run_one --job temp\REAL_TEST --pdf mans_fails.pdf --page 3`** | **MILESTONE OK**: request carries `C:/Users/.../temp/REAL_TEST/...` (absolute, forward slashes), `Statuss : OK`, `Objekti : 3`, `Output : ir (...60554124 bytes)`, result `job_id`/`run_id` match the request, MASTER template untouched (same size/hash), 0 documents left open in Illustrator |
+| **Same run with a Latvian job folder** (`temp\Realitātes tests LV`, PDF `Māja Āčēģī.pdf`) | **MILESTONE OK**: Latvian characters survive request JSON, worker log and result JSON without mojibake |
 | Adapter handshake (fake Illustrator) | stale result deleted, matching result accepted, mismatching result rejected + logged, late result picked up, timeout with log tail, COM error as `ERROR` result |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
@@ -68,9 +70,6 @@ Status: **Python orchestrator + Illustrator worker implemented and verified by a
   git does not store the folder name and `origin` already points at the new
   repository. `.venv\Scripts\python.exe` keeps working; only the unused
   `activate.ps1` / `activate.bat` keep the old path (`docs/PYTHON_ENV.md`).
-* **One page end to end inside Illustrator**: the Python half is proven, the
-  Illustrator half has not run yet on this machine. Procedure and pass criteria:
-  `MIGRATION_PLAN.md` §3.
 * `template_mode = "saveas"` (real `.ait` templates) is implemented in the worker
   but has not been exercised with a real `.ait` file.
 * The visual result of the shared cleanup engine in the new pipeline is covered
@@ -88,9 +87,9 @@ Status: **Python orchestrator + Illustrator worker implemented and verified by a
 
 ## Next milestone
 
-1. Run the one page milestone in Illustrator (`MIGRATION_PLAN.md` §3) and record
-   the result here.
-2. Implement queue + state: `state.json` with atomic writes,
+1. Implement queue + state: `state.json` with atomic writes,
    WAITING/RUNNING/DONE/ERROR/SKIPPED, `RUNNING -> INTERRUPTED` recovery on
    restart, CONTINUE / retry, final DONE/SKIPPED/ERROR summary.
-3. Then the Tkinter GUI (PROJECT / PDF / MAPPING / RUN).
+2. Then the Tkinter GUI (PROJECT / PDF / MAPPING / RUN).
+3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and
+   a real `.ait` template run.
