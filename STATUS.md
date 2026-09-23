@@ -115,7 +115,7 @@ Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own p
 | --- | --- |
 | `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring, `jsx/` ASCII only + no BOM + LF) |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 214 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, multi PDF queue (identity, drift, reconcile, collisions), GUI controller/tasks/window, GUI multi PDF |
+| `pytest` | 215 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, multi PDF queue (identity, drift, reconcile, collisions), GUI controller/tasks/window, GUI multi PDF |
 | `app.py --diagnose` | paths and interpreter reported |
 | `run_one --preflight-only` (14 page demo PDF) | 17 checks OK, request JSON written to `runtime/current_job.json` |
 | `run_one --dry-run` | valid contract request produced |

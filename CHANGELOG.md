@@ -48,7 +48,8 @@ Python <-> JSX contract are untouched (config `version: 2` is a Python side form
   RUN tab has RUN CURRENT PDF / RUN ALL ENABLED PDFs / CONTINUE PROJECT /
   RETRY PROJECT ERRORS plus a per document progress list and a project summary
   (`PDFs: 2 | Lapas kopā: 7`, `appendix.pdf - lapa 004 / 004`).
-- Tests: `tests/test_multi_pdf.py` (16) and `tests/test_gui_multi_pdf.py` (10):
+- Tests: `tests/test_multi_pdf.py` (16), `tests/test_gui_multi_pdf.py` (12) and a
+  PDF tab active document regression test in `tests/test_gui_smoke.py` (7):
   two PDFs with the same page numbers, unique job ids, deterministic order, one
   PDF error not stopping another, output collision detection (config + runtime),
   v1 -> v2 migration, reopening a v1 JOB, state files without `pdf_id`, page count
@@ -79,6 +80,11 @@ Python <-> JSX contract are untouched (config `version: 2` is a Python side form
   error.
 - `validate_config` no longer rejects a version 1 file (it migrates it) and now
   also reports duplicate documents and one output name used by two documents.
+- The PDF tab reverted a document switch made through the controller: its own tree
+  selection was treated as authoritative, so a programmatic switch (a reconcile, a
+  closed JOB, the acceptance driver) snapped back to the previously selected PDF.
+  The tab now renders the controller's active document (found by the milestone 4
+  screenshot evidence, regression test `test_gui_smoke.py`).
 
 ## [0.4.0] - 2026-09-23
 

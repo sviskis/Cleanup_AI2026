@@ -8,7 +8,7 @@ There are **three** automated gates plus a manual Illustrator checklist.
 | --- | --- | --- | --- |
 | JSX static + ES3 compile | `tools\check_jsx.ps1` | include graph, real ES3 compile, ES3 syntax scan, module API wiring, for **both** entry points (`src/Main.jsx`, `jsx/worker.jsx`) | no |
 | JSX unit + contract tests | `tools\run_tests.ps1` | 79 unit tests (stubbed host) + 44 JSON contract tests against the shared fixtures | no |
-| Python tests | `.venv\Scripts\python.exe -m pytest` | 214 tests: naming, natural sort, page count (PyMuPDF + pypdf fallback), mapping, config (v1 -> v2 migration), contract, atomic IO, preflight, adapter handshake, queue, multi PDF (identity, drift, reconcile, collisions), GUI controller/tasks/window | no |
+| Python tests | `.venv\Scripts\python.exe -m pytest` | 215 tests: naming, natural sort, page count (PyMuPDF + pypdf fallback), mapping, config (v1 -> v2 migration), contract, atomic IO, preflight, adapter handshake, queue, multi PDF (identity, drift, reconcile, collisions), GUI controller/tasks/window | no |
 | Manual | `docs/TESTING.md` §2 (below) | actual cleaning result, visual quality, error paths | yes |
 
 All three automated gates must be green before a commit (`.clinerules`).
@@ -107,8 +107,8 @@ Tk cannot open):
 ```powershell
 .venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_controller.py -q   # 17
 .venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_tasks.py -q        # 6
-.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_smoke.py -q        # 6
-.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_multi_pdf.py -q    # 10
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_smoke.py -q        # 7
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_multi_pdf.py -q    # 12
 ```
 
 What they cover: project loading populates the model, PDF selection reports the page

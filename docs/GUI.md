@@ -195,6 +195,7 @@ start and shows "Template 003_pagina.ai: nav atrasts" instead.
 | No way to re-run a page whose output exists | `RESET` + RUN reported `SKIP` | RUN tab checkbox "Pārrakstīt esošos AI (overwrite)" (the CLI's `--overwrite`) |
 | Stale detail line in MAPPING | showed "Nav atvērts neviens JOB" after the JOB was opened | `refresh()` re-renders the detail from the current selection |
 | `after(...)` pump outlived the window | "invalid command name ..._pump" in the console | `on_close()` cancels the pending callback |
+| (M4) PDF tab overrode a programmatic document switch | selecting a document in the controller (reconcile, acceptance, a deleted PDF) snapped back to the tree's old selection, so MAPPING showed the wrong PDF | `PdfTab.refresh()` renders the controller's active document and only falls back to its own selection when that document is gone |
 
 ### Screenshots
 

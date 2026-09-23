@@ -213,7 +213,12 @@ class PdfTab(ttk.Frame):
     # ------------------------------------------------------------------ refresh
 
     def refresh(self, *_args: Any) -> None:
-        """Fill the document table from the controller; never drop the selection."""
+        """Render the document list from the controller (never the other way round).
+
+        The controller owns the active document; this tab only shows it. The tree
+        selection follows the controller, so a programmatic switch (reconcile report,
+        acceptance driver, a deleted document) is not silently reverted by the tab.
+        """
         rows = []
         if self.ctx.controller.project is not None:
             try:
@@ -223,9 +228,12 @@ class PdfTab(ttk.Frame):
                 self.ctx.report(str(exc), error=True)
         self._rows = rows
 
-        keep = self._selected_name() or (
-            self.ctx.controller.active_pdf.name if self.ctx.controller.active_pdf else None
-        )
+        names = [row.name for row in rows]
+        active = self.ctx.controller.active_pdf.name if self.ctx.controller.active_pdf else None
+        target = active if active in names else self._selected_name()
+        if target not in names:
+            target = names[0] if names else None
+
         self._loading = True
         try:
             self.tree.delete(*self.tree.get_children())
@@ -248,8 +256,6 @@ class PdfTab(ttk.Frame):
                     ),
                     tags=tuple(tags),
                 )
-            names = [row.name for row in rows]
-            target = keep if keep in names else (names[0] if names else None)
             if target is not None:
                 self.tree.selection_set(target)
         finally:
@@ -261,7 +267,7 @@ class PdfTab(ttk.Frame):
             self.note.configure(text="JOB/PDF mapē nav neviena PDF faila.")
             return
 
-        if self.ctx.controller.active_pdf is None or self.ctx.controller.active_pdf.name != target:
+        if active is None or active != target:
             try:
                 self.ctx.controller.select_document(target)
             except ControllerError as exc:

@@ -68,6 +68,34 @@ def test_opening_a_job_fills_the_tabs(window, tmp_path, make_pdf):
     assert "manual.pdf" in window.run_tab.current["text"]
 
 
+def test_pdf_tab_follows_the_controller_active_document(window, tmp_path, make_pdf):
+    """Switching the document must not be reverted by the PDF tab's own selection."""
+    project = JobProject.open(tmp_path / "JOB")
+    make_pdf(project.pdf_dir / "alpha.pdf", pages=2)
+    make_pdf(project.pdf_dir / "beta.pdf", pages=3)
+    (project.template_dir / "MASTER_AI_TEMPLATE.ai").write_bytes(b"%PDF-1.5\nx\n")
+
+    window.controller.open_project(project.root)
+    window.refresh_all()
+    assert window.controller.active_pdf.name == "alpha.pdf"  # natural order picks it
+
+    window.controller.select_document("beta.pdf")
+    window.refresh_all()
+
+    assert window.controller.active_pdf.name == "beta.pdf"
+    assert window.pdf_tab.tree.selection() == ("beta.pdf",)
+    assert "beta.pdf" in window.mapping_tab.document_label["text"]
+    assert len(window.mapping_tab.tree.get_children()) == 3
+
+    # ... and clicking a row still switches the controller the other way round
+    window.pdf_tab.tree.selection_set("alpha.pdf")
+    window.pdf_tab.on_use()
+    window.refresh_all()
+
+    assert window.controller.active_pdf.name == "alpha.pdf"
+    assert len(window.mapping_tab.tree.get_children()) == 2
+
+
 def test_mapping_actions_keep_the_row_selection(window, tmp_path, make_pdf):
     """A refresh must not drop the selection (RESET then RUN SELECTED has to work)."""
     project = JobProject.open(tmp_path / "JOB")
