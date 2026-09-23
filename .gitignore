@@ -27,6 +27,11 @@ __pycache__/
 .coverage
 htmlcov/
 
+# packaging artifacts (tools/build_release.ps1 recreates them)
+build/
+dist/
+*.spec.tmp
+
 # Illustrator / system junk
 *.bak
 *.autosave

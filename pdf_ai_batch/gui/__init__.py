@@ -37,7 +37,33 @@ LIVE_STATE_REFRESH_SECONDS = 0.5
 
 
 def run_gui(argv: list[str] | None = None) -> int:
-    """Launch the GUI (imported lazily so CLI-only use needs no Tk)."""
+    """Launch the GUI (imported lazily so CLI-only use needs no Tk).
+
+    A packaged build first makes sure there is a writable application log folder
+    (`<install>/logs` or `%LOCALAPPDATA%/Cleanup AI 2026/logs`) and writes one startup
+    record with the version, the executable and the result of the asset checks - so a
+    production start is diagnosable even before a JOB is open. Once a JOB is open the
+    canonical logs are its `JOB/LOG` files (see `MainWindow._ensure_job_logging`).
+    """
+    from .. import paths
+
+    if paths.is_frozen():
+        from .. import __version__, diagnostics
+        from ..logging_setup import setup_logging
+
+        logger = setup_logging(paths.log_dir(), console=False)
+        report = diagnostics.run_diagnostics(check_illustrator=False)
+        logger.info(
+            "Cleanup AI 2026 %s start | exe=%s | instalācija=%s | pārbaudes=%s | "
+            "kļūdas=%s | brīdinājumi=%s",
+            __version__,
+            paths.executable_path(),
+            paths.app_root(),
+            len(report.items),
+            report.errors or "-",
+            report.warnings or "-",
+        )
+
     from .main_window import launch
 
     return launch(argv)

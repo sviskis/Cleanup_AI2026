@@ -60,6 +60,13 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
       retention 100, pinned copies kept); `[UNDO PLAN CHANGE]` goes one step back and
       `[RESTORE SNAPSHOT]` restores an older copy after keeping the current plan, so a
       restore is reversible too. See `docs/TESTING.md` §0i.
+- [x] Windows packaging (milestone 9): `tools\build_release.ps1` builds
+      `dist\Cleanup AI 2026\Cleanup AI 2026.exe` with one command (gates, PyInstaller via
+      `tools/cleanup_ai.spec`, asset copy, verification, packaged `--diagnose` smoke
+      test); paths come from the executable, production logs land in the install (or
+      `%LOCALAPPDATA%`), the diagnostics check assets + COM + Illustrator without
+      launching it, and the shortcut tool is opt-in. See `docs/PACKAGING.md` and
+      `docs/TESTING.md` §0j.
       Done: `pdf_ai_batch/preview/` (PyMuPDF renderer + disposable
       `JOB/.cache/preview` keyed on pdf + mtime + size + page + render size),
       `gui/preview_loader.py` (one worker thread, priority queue, generations, event

@@ -22,6 +22,45 @@ LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 APP_LOG_NAME = "app.log"
 BATCH_LOG_PREFIX = "batch"
+CONSOLE_LOG_NAME = "console.log"
+GUI_HANDLER_NAME = "gui"
+
+
+def _attach_streams() -> None:
+    """A windowed build (pythonw / PyInstaller --noconsole) has no stdout/stderr.
+
+    Attach to the console it was started from when there is one (so `--diagnose`
+    prints into cmd), otherwise send the text to the application log folder, so
+    printing never raises and the information is never lost. In development both
+    streams exist and nothing happens here.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            if ctypes.windll.kernel32.AttachConsole(-1):  # the parent process console
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+                return
+        except Exception:  # noqa: BLE001 - no console: fall back to a file
+            pass
+
+    from . import paths
+
+    try:
+        target = paths.log_dir() / CONSOLE_LOG_NAME
+        target.parent.mkdir(parents=True, exist_ok=True)
+        stream = open(target, "a", encoding="utf-8", errors="replace")
+        sys.stdout = stream
+        sys.stderr = stream
+    except OSError:  # pragma: no cover - a completely hostile environment
+        import io
+
+        sys.stdout = io.StringIO()
+        sys.stderr = sys.stdout
 
 
 def configure_console() -> None:
@@ -33,6 +72,8 @@ def configure_console() -> None:
     console output code page to 65001 fixes the reader, otherwise a PowerShell
     capture would show mojibake.
     """
+    _attach_streams()
+
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:

@@ -22,6 +22,18 @@ run at any time.
 | `normalize_eol.ps1` | Rewrites every project text file to LF line endings (UTF-8, BOM preserved when present), which is the format the reference script and ExtendScript use. Skips `archive/original/` and `logs/`. |
 | `make_demo_job.py` | Creates a demo JOB folder with a real multi page PDF (PyMuPDF) and placeholder templates, so the preflight and the one page milestone can be exercised immediately. `--pages N`, `--no-page-templates`. |
 
+## Packaging (milestone 9)
+
+| Tool | What it does |
+| --- | --- |
+| `build_release.ps1` | **One command** for the production Windows build: runs the three gates (unless `-SkipTests`), deletes `build/` + `dist/`, runs PyInstaller with `cleanup_ai.spec`, copies `jsx/`, `config/`, `docs/` and the top level docs next to the `.exe` (and into `program/`), creates `logs/`, verifies every required asset is present and that no `Illustrator.exe` was bundled, then runs the packaged `--diagnose` as a smoke test. `-Configuration Debug` keeps the console. |
+| `cleanup_ai.spec` | The PyInstaller recipe: entry `app.py`, `tkinter`/`pywin32`/PyMuPDF hidden imports, `jsx/`, `config/`, `docs/` as data, a version resource from `VERSION`, `COLLECT` into `dist/Cleanup AI 2026/` with `console=False` in Release. It documents why PyInstaller and never includes Illustrator. |
+| `create_shortcut.ps1` | Opt-in desktop shortcut for the built application (`-Target`, `-ShortcutFolder`, `-AllUsers`). Nothing in the application or the build writes to a desktop by itself. |
+
+Full documentation (layout, paths, version, logs, limitations): `docs/PACKAGING.md`.
+Packaging requirements: `requirements-packaging.txt`. Acceptance evidence:
+`temp/packaged_acceptance_m9.txt`.
+
 ## Cheat sheet
 
 ```powershell
@@ -34,6 +46,12 @@ powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1
 powershell -ExecutionPolicy Bypass -File tools\freeze_legacy.ps1
 powershell -ExecutionPolicy Bypass -File tools\migrate_extract_sections.ps1
 powershell -ExecutionPolicy Bypass -File tools\normalize_eol.ps1 -WhatIfOnly
+
+# production build (gates + PyInstaller + assets + verification + smoke test)
+powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+
+# optional desktop shortcut for the built application
+powershell -ExecutionPolicy Bypass -File tools\create_shortcut.ps1
 
 # demo job for the first end to end test
 .venv\Scripts\python.exe tools\make_demo_job.py --root temp\DEMO_JOB --pages 14
@@ -52,7 +70,10 @@ behaviour - that is what the manual checklist in `docs/TESTING.md` is for.
 PowerShell 5.1 reads `.ps1` files without a BOM as ANSI.
 `migrate_extract_sections.ps1` contains Latvian replacement strings, so it must
 keep its UTF-8 BOM (it has one - a missing BOM silently writes mojibake into the
-generated files). Keep new PowerShell tools ASCII only, or give them a BOM.
+generated files). The same applies to `build_release.ps1` and `create_shortcut.ps1`,
+which print Latvian progress text - both carry a BOM. Keep new PowerShell tools ASCII
+only, or give them a BOM (a missing BOM is a parse error, not just mojibake: the
+mojibake byte can break a string literal).
 
 `jsx/*.jsx` and `jsx/*.js` must be **pure ASCII** (write Latvian as `\uXXXX`
 escapes), without a BOM and with LF line endings:

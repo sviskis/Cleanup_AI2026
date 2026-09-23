@@ -24,6 +24,21 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+## Packaging (production builds, milestone 9)
+
+The packaging tool is a **separate, optional** install - it is not needed to run or test
+the application from source:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-packaging.txt
+powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+```
+
+`PyInstaller 6.22` works with Python 3.14 and produces
+`dist\Cleanup AI 2026\Cleanup AI 2026.exe`; see `docs/PACKAGING.md` for the layout,
+paths, logs and limitations. The packaged application needs **no Python** on the target
+machine, but it does need the Adobe Illustrator it talks to through COM.
+
 ## Installed packages (`pip freeze`)
 
 ```text

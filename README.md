@@ -54,6 +54,11 @@ are checked together and only a real error blocks a run. After every pass, a rep
 with the counts, the durations, the objects, the retries and the exact failure reasons
 lands in `JOB/LOG/reports/` - never overwritten, JSON for tools and TXT for people.
 
+Production start is a single file: `powershell -ExecutionPolicy Bypass -File
+tools\build_release.ps1` builds `dist\Cleanup AI 2026\Cleanup AI 2026.exe` (no Python
+needed on the target machine, no console window, Illustrator still installed normally);
+see `docs/PACKAGING.md`.
+
 Mapping a 300 page magazine no longer means 300 clicks: the MAPPING tab assigns a
 template to a whole range (`6-35`), matches numbered templates against page numbers
 (`001_cover.ai` -> page 1), copies a mapping from one range to another (even into a
@@ -175,10 +180,20 @@ pdf_ai_batch/                 Python orchestrator
   preview/  renderer (PyMuPDF page rendering), cache (JOB/.cache/preview)
   gui/   main_window, controller, tasks, project_tab, pdf_tab, mapping_tab,
          bulk_dialogs, preview_panel, preview_loader, run_tab
-  adapters/illustrator.py     the ONLY COM code (pywin32)
-  tests/                      410 pytest tests (contract, encoding, state, queue,
-                               mapping rules, history, preflight, reports, preview,
-                               GUI)
+  diagnostics.py             production diagnostics (--diagnose, startup check)
+  paths.py                   app/install paths (source AND packaged layout)
+  adapters/illustrator.py    the ONLY COM code (pywin32)
+  tests/                     431 pytest tests (contract, encoding, state, queue,
+                             mapping rules, history, preflight, reports, preview,
+                             packaging, GUI)
+
+tools/                      gates + packaging
+  check_jsx.ps1              ES3/API/encoding gate for jsx/ and src/
+  run_tests.ps1              JSX unit tests + JSON contract tests
+  build_release.ps1          one command: gates + PyInstaller + assets + verify
+  cleanup_ai.spec            the PyInstaller recipe (why PyInstaller: see the file)
+  create_shortcut.ps1        opt-in desktop shortcut
+requirements*.txt           runtime deps / packaging-only deps
 
 src/                          legacy ScriptUI application (phase 1, kept as baseline)
 legacy/current_working_v10.jsx frozen baseline (generated, hashed)
@@ -318,6 +333,11 @@ from ExtendScript; the report folder is ready for a future Python helper.
 # automated gate - must be green before every commit
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1
 powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1
+.venv\Scripts\python.exe -m pytest
+
+# production build: the same gates, then PyInstaller, asset copy, verification and a
+# packaged --diagnose smoke test -> dist\Cleanup AI 2026\Cleanup AI 2026.exe
+powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
 
 # regenerate the modules extracted from the reference script (never hand edit those)
 powershell -ExecutionPolicy Bypass -File tools\migrate_extract_sections.ps1

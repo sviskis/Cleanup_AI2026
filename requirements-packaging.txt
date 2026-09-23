@@ -1,0 +1,15 @@
+# Packaging only (NOT needed to run or test from source).
+#
+#     .venv\Scripts\python.exe -m pip install -r requirements-packaging.txt
+#     powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+#
+# PyInstaller: the application is pure Python + pywin32 + tkinter + PyMuPDF, which
+# PyInstaller hooks first class (tkinter, COM/pywin32, PyMuPDF). It builds a folder
+# distribution with no code changes and keeps `python app.py` working unchanged.
+# Alternatives considered and why not:
+#   * cx_Freeze - fewer maintained hooks for tkinter/COM on Python 3.14 at this time
+#   * Nuitka    - compiles everything (slow builds, fiddly for pywin32/tkinter) for a
+#                 gain we do not need; the workload runs inside Illustrator, not Python
+#   * Embeddable Python + a launcher script - no EXE, and the user still needs to know
+#                 about Python
+PyInstaller>=6.22

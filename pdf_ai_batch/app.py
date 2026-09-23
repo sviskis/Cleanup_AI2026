@@ -16,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, paths
+from . import __version__, diagnostics, paths
 from .adapters.illustrator import IllustratorAdapter, illustrator_process_running
 from .batch import cli as batch_cli
 from .logging_setup import configure_console, setup_logging
@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="store_true", help="print the version and exit")
     parser.add_argument("--diagnose", action="store_true", help="print environment and path information")
+    parser.add_argument(
+        "--with-illustrator",
+        action="store_true",
+        help="with --diagnose: also check that Illustrator is reachable (may launch it)",
+    )
     parser.add_argument("--health", action="store_true", help="check that a job can run now (files, runtime, Illustrator via attach -> launch)")
     parser.add_argument("--gui", action="store_true", help="start the GUI (default when no action is given)")
     parser.add_argument("--run-one", action="store_true", help="run the one page milestone test")
@@ -37,13 +42,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def print_diagnostics() -> int:
+def print_diagnostics(*, check_illustrator: bool = False) -> int:
+    """Production diagnostics: paths, packaging, COM, assets, writable folders."""
+    report = diagnostics.run_diagnostics(check_illustrator=check_illustrator)
     print(f"pdf_ai_batch version : {__version__}")
     print(f"python               : {sys.version.split()[0]} ({sys.executable})")
     for key, value in paths.describe().items():
         exists = Path(value).exists()
         print(f"{key:<20} : {value}   {'[ok]' if exists else '[missing]'}")
     print(f"illustrator process  : {'running' if illustrator_process_running() else 'not detected'}")
+    print("")
+    print("--- production diagnostics ---")
+    print(report.to_text())
+    if not report.ok:
+        print("")
+        print("Trūkst obligāto resursu - skatīt [FAIL] rindas augstāk.")
+        return 1
     return 0
 
 
@@ -93,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.diagnose:
-        return print_diagnostics()
+        return print_diagnostics(check_illustrator=args.with_illustrator)
 
     if args.health:
         return print_health()
@@ -106,18 +120,51 @@ def main(argv: list[str] | None = None) -> int:
 
     # default action (and --gui): the Tkinter GUI
     if args.gui or not forwarded:
-        try:
-            from .gui import run_gui
-        except ImportError as exc:  # pragma: no cover - no Tk in this interpreter
-            print(f"GUI nav pieejams: {exc}")
-            print("Izmanto --batch (rinda) vai --run-one (viena lapa).")
-            return 1
-        return run_gui(forwarded)
+        return start_gui(forwarded)
 
     build_parser().print_help()
     print("")
     print(f"pdf_ai_batch {__version__} - nezināma darbība: {' '.join(forwarded)}")
     return 3
+
+
+def start_gui(argv: list[str] | None = None) -> int:
+    """Start the GUI, after the production startup check when running as an .exe.
+
+    A packaged build verifies its own assets first and shows a message box with the
+    human readable reason when something is missing, instead of a traceback in a
+    window that never appears. In development nothing is blocked - the diagnostics are
+    printed by `--diagnose`.
+    """
+    if paths.is_frozen():
+        report = diagnostics.run_diagnostics(check_illustrator=False)
+        if not report.ok:
+            message = (
+                "Cleanup AI 2026 nevar startēt: trūkst obligāto resursu.\n\n"
+                + "\n".join(report.errors)
+                + "\n\n"
+                + report.to_text()
+            )
+            print(message)
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror("Cleanup AI 2026", message)
+                root.destroy()
+            except Exception:  # noqa: BLE001 - no display: the text above is enough
+                pass
+            return 1
+
+    try:
+        from .gui import run_gui
+    except ImportError as exc:  # pragma: no cover - no Tk in this interpreter
+        print(f"GUI nav pieejams: {exc}")
+        print("Izmanto --batch (rinda) vai --run-one (viena lapa).")
+        return 1
+    return run_gui(argv or [])
 
 
 if __name__ == "__main__":

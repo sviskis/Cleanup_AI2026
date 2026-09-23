@@ -289,6 +289,34 @@ plan they replace, the reopened GUI lists the same snapshots, `state.json` count
 all 36 `job_id`s are unchanged, every history file is plan-only and Illustrator was
 never touched.
 
+### Windows desktop application (milestone 9)
+
+```powershell
+# one command: gates, clean, PyInstaller, assets, verification, packaged smoke test
+powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+
+# run it
+"dist\Cleanup AI 2026\Cleanup AI 2026.exe"
+"dist\Cleanup AI 2026\Cleanup AI 2026.exe" --diagnose
+```
+
+`docs/PACKAGING.md` explains the layout, why PyInstaller, paths (everything from the
+executable, never the working directory), the version resource, the production log
+location and the limitations. Illustrator is never bundled - the .exe talks to the
+installed Illustrator through COM.
+
+| Test file | What it proves |
+| --- | --- |
+| `tests/test_packaging.py` (22) | path resolution in both layouts (source, frozen, `PDF_AI_BATCH_HOME`/`ROOT`, PyInstaller bundle fallback, `%LOCALAPPDATA%` fallback for read only installs, no cwd dependency); diagnostics in source and in a broken install (missing JSX/config are failures, JSON serialisable, Illustrator contacted only on request, a windowed build still gets an output stream); and the packaging contract (`VERSION` == `__version__`, the spec covers assets + COM libraries + no Illustrator + windowed/debug, the build script runs the gates and verifies its own result, the shortcut tool is opt-in, `build/`/`dist/` ignored, win32com only in the adapter) |
+
+Real acceptance: `temp/run_packaged_acceptance_m9.py` (10 steps, evidence
+`temp/packaged_acceptance_m9.txt`, screenshot `temp/gui_m9_window.png`) - distribution
+layout, PE subsystem 2 (GUI, no console), ProductVersion 0.9.0, `--version` and
+`--diagnose` from another working directory, packaged `--preflight-project` READY on a
+Latvian path, `--run-all` of 7 real pages with `state.json` + an immutable report from
+the packaged app, the GUI opening/closing cleanly with its startup record in
+`<install>/logs/app.log`, the shortcut tool, and `Illustrator Documents.Count == 0`.
+
 ## 1. Automated checks
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1

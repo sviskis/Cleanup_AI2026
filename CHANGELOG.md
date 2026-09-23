@@ -43,6 +43,48 @@ older plan back. A restore keeps the plan it replaces first, so it is reversible
 - Tools: `temp/run_gui_acceptance_m8.py` (real GUI, evidence
   `temp/gui_acceptance_m8.txt`, screenshots `temp/gui_m8_*.png`)
 
+### Milestone 9 - Windows packaging (same release)
+
+- `tools/cleanup_ai.spec` + `tools/build_release.ps1` - **one command** builds the
+  production distribution `dist/Cleanup AI 2026/` (`Cleanup AI 2026.exe` + `program/` +
+  `jsx/` + `config/` + `logs/` + docs): it runs the three gates, cleans `build/` and
+  `dist/`, runs PyInstaller, copies the assets (next to the exe and into `program/`),
+  verifies the result and runs the packaged `--diagnose` as a smoke test. PyInstaller is
+  the choice, with the reasoning documented in the spec, the requirements file and
+  `docs/PACKAGING.md`; Illustrator is never bundled.
+- `tools/create_shortcut.ps1` - documented, **opt-in** desktop shortcut (nothing writes
+  to a desktop by itself).
+- `requirements-packaging.txt` - PyInstaller plus why not cx_Freeze / Nuitka.
+- `pdf_ai_batch/paths.py` - one path resolver for both layouts: everything comes from
+  the executable (frozen) or the repository (source), never from the current working
+  directory; `PDF_AI_BATCH_HOME` overrides the install folder, and the writable
+  `runtime/` + `logs/` folders fall back to `%LOCALAPPDATA%/Cleanup AI 2026/` when the
+  install folder is read only (nothing is ever written into Program Files).
+- `pdf_ai_batch/diagnostics.py` - production diagnostics for `--diagnose`: version,
+  frozen/source, Python + architecture, PyInstaller bundle, pywin32, the JSX assets with
+  their paths, `default_config.json`, the writable folders, Illustrator **installed**
+  (registry ProgID + Adobe folders, no launch) and reachable only with
+  `--with-illustrator`, plus the working directory. Exit code 1 on a missing resource.
+- `app.py` - `--diagnose --with-illustrator`, and a packaged startup check that shows a
+  human readable message box instead of a traceback when an asset is missing.
+- `logging_setup.py` - a windowed build has no stdout: the diagnostics attach to the
+  parent console when there is one, otherwise the text goes to
+  `<install>/logs/console.log`; the packaged GUI writes one startup record (version,
+  exe, install folder, diagnostics result) into `<install>/logs/app.log`.
+- The executable carries the version resource (ProductVersion 0.9.0 from `VERSION`,
+  the single source of truth, shown in the GUI, `--diagnose`, the logs and every
+  report).
+- Tests: `tests/test_packaging.py` (22)
+- Tools: `temp/run_packaged_acceptance_m9.py` (evidence
+  `temp/packaged_acceptance_m9.txt`, screenshot `temp/gui_m9_window.png`)
+
+### Changed (milestone 9)
+
+- `paths.describe()` reports `app_root` + `layout` instead of `repo_root`;
+  `config_dir()` and `default_config_file()` moved to `<install>/config`;
+  `pdf_ai_batch/core/preflight.py` still resolves the JSX assets through `paths`.
+- `.gitignore` - `build/`, `dist/` and `*.spec.tmp`.
+
 ### Changed
 
 - `gui/controller.py` - a mutation is only saved (and only snapshotted) when the plan

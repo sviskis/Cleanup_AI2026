@@ -5,6 +5,15 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
 
 ## Hard rules
 
+- **Packaging keeps the same boundaries.** `tools/build_release.ps1` +
+  `tools/cleanup_ai.spec` are the only packaging path (one command, gates first, assets
+  copied and verified, packaged `--diagnose` as the smoke test). The `.exe` must keep
+  working from any working directory and find its assets through
+  `pdf_ai_batch/paths.py`; writable data goes to the install folder or
+  `%LOCALAPPDATA%/Cleanup AI 2026/`, never into Program Files. Illustrator is never
+  bundled and the version has exactly one source (`VERSION`). Packaging must not add a
+  second COM entry point or a frozen-only code path outside `paths.py`,
+  `diagnostics.py` and the startup check in `app.py`.
 - **One plan history.** Every `config.json` change snapshots the plan it replaces into
   `JOB/CONFIG/history/` through `core/history.py` (atomic, plan data only, retention
   with pinned copies kept). The snapshot is written by `AppController._before_mutation`

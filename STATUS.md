@@ -2,7 +2,7 @@
 
 Version: 0.9.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 8 done - the plan of a JOB is recoverable: every real plan change snapshots the plan it replaces into `JOB/CONFIG/history/` (atomic, plan data only, retention 100, pinned copies kept), and `[UNDO PLAN CHANGE]` / `[RESTORE SNAPSHOT]` put an older plan back - a restore keeps the current plan first, so it is reversible too; a real 11 step acceptance run (36 page JOB, a range edit, undo, preset, restore an older snapshot, reopen, state/queue unchanged) passed**
+Status: **Milestones 8 and 9 done - the plan is recoverable (snapshots in `JOB/CONFIG/history/` with `[UNDO PLAN CHANGE]` / `[RESTORE SNAPSHOT]`) AND the application ships as a Windows desktop executable: `tools\build_release.ps1` builds `dist\Cleanup AI 2026\Cleanup AI 2026.exe` with one command (gates, PyInstaller, asset copy, verification, packaged `--diagnose` smoke test); a real packaged acceptance run processed 7 pages through Illustrator from the .exe, on a Latvian project path, with reports, preflight, the GUI, the shortcut tool and `Illustrator Documents.Count == 0`**
 
 ## Working
 
@@ -223,6 +223,30 @@ Status: **Milestone 8 done - the plan of a JOB is recoverable: every real plan c
 * Demonstration and evidence: `docs/GUI.md` §Plan history and
   `temp/gui_acceptance_m8.txt`.
 
+### Windows desktop application (milestone 9)
+
+* `tools/build_release.ps1` - **one command** for the production build:
+  `dist/Cleanup AI 2026/` with `Cleanup AI 2026.exe` (windowed, no console),
+  `program/` (Python + libraries + the application), `jsx/`, `config/`, `logs/`,
+  `docs/`. It runs the three gates first, cleans `build/` and `dist/`, runs PyInstaller
+  with `tools/cleanup_ai.spec`, copies the assets (next to the exe and into `program/`),
+  verifies them and runs the packaged `--diagnose` as a smoke test.
+* `tools/cleanup_ai.spec` - PyInstaller spec: hidden imports for `tkinter`, `pywin32`
+  COM and PyMuPDF, whole `jsx/`, `config/`, `docs/` folders as data, a version resource
+  from `VERSION`, no Illustrator. Release is `console=False`, `-Configuration Debug`
+  keeps the console.
+* `pdf_ai_batch/diagnostics.py` + `app.py --diagnose` - production diagnostics
+  (version, frozen/source, Python + architecture, PyInstaller bundle, pywin32, JSX
+  assets with paths, default config, writable runtime/log folders, Illustrator
+  installed without launching it, reachable only with `--with-illustrator`); a packaged
+  start shows a message box with the reason when a resource is missing.
+* Paths: everything is derived from the executable (`pdf_ai_batch/paths.py`), never from
+  the current working directory; a read only install keeps its writable data in
+  `%LOCALAPPDATA%/Cleanup AI 2026/`.
+* `tools/create_shortcut.ps1` - opt-in desktop shortcut (never automatic).
+* Details, layout and limitations: `docs/PACKAGING.md`; evidence:
+  `temp/packaged_acceptance_m9.txt` and `temp/gui_m9_window.png`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -258,6 +282,8 @@ Status: **Milestone 8 done - the plan of a JOB is recoverable: every real plan c
 | Plan snapshots + undo, real GUI, 36 page JOB (`temp/run_gui_acceptance_m8.py`, `temp/gui_acceptance_m8.txt`) | PASS, 11 steps: AUTO ASSIGN TEMPLATES materialises the plan (0 snapshots before it); ASSIGN TO RANGE 6-35 -> `002_intro.ai` creates snapshot 1 whose content is byte-equal to the previous plan (meta: 1 PDF / 36 pages, no `state`/`attempts` key); `[UNDO PLAN CHANGE]` restores the original mapping and adds the recovery copy (`kind=restore`); a second range edit + APPLIED PRESET produce snapshots 2-4; `[RESTORE SNAPSHOT]` of an older copy puts that plan back and keeps the pre-restore plan; after a GUI reopen the same 5 snapshots are listed and the plan persists; `state.json` counts unchanged (`WAITING 36`) and all 36 `job_id`s identical; every history file is plan-only; Illustrator documents 0 |
 | Plan history (unit) | 17 tests: snapshot before a bulk mutation keeps the previous plan (with documents/pages/config version metadata), plan-data-only payload, timestamp names never reused (`-2`), no snapshot without a plan, undo restores the exact previous config (and is itself undoable), undo with nothing to undo returns None, undo survives a corrupt snapshot, restore snapshots the current plan first and refuses a corrupt/wrong-version file, retention keeps the newest and never a pinned copy, `keep=0` disables pruning, a failed write leaves no file and no config change, history never touches state.json or outputs, v1 config is snapshotted as v2, multi-PDF plans with UTF-8 names round trip without mojibake, human readable summaries |
 | Plan history through the GUI | 13 tests: a bulk edit snapshots the plan before the change (reason + `bulk-assign` kind), every mutation kind is recorded (`bulk-assign`, `preset`, `auto-map`, `plan`), a no-op edit creates no snapshot, an unwritable snapshot blocks the mutation, UNDO restores the previous plan and keeps the queue states (ERROR stays ERROR with its attempts), undo is itself undoable, undo without history reports nothing, RESTORE puts an older plan back (recovery copy listed), restore accepts a path and rejects an unknown name, a corrupt snapshot is refused without touching the plan, the list survives a corrupt file, and the history survives a GUI reopen |
+| Packaged application, real Illustrator, 2 PDFs / 7 pages (`temp/run_packaged_acceptance_m9.py`, `temp/packaged_acceptance_m9.txt`) | PASS, 10 steps: layout (`Cleanup AI 2026.exe`, `program/python314.dll`, `program/base_library.zip`, `jsx/*`, `config/default_config.json`, `VERSION`, `logs/`, no `Illustrator.exe`), 70.2 MB, PE subsystem 2 (GUI, no console) and ProductVersion 0.9.0, `--version` and `--diagnose` from a different working directory (paths come from the exe, no `[FAIL]`), packaged `--preflight-project` READY on a Latvian project path, `--run-all` -> 7 DONE in Illustrator with `state.json` and an immutable report (`app_version` 0.9.0, `pdfs` 2), AI_OUT 7 files with Latvian names, GUI window opened (screenshot) + `<install>/logs/app.log` startup record + closed with code 0, shortcut tool created only the explicit `.lnk` (desktop untouched), `Illustrator Documents.Count == 0` |
+| Packaging contract (unit) | 22 tests: source layout uses the repository, `PDF_AI_BATCH_ROOT`/`PDF_AI_BATCH_HOME` overrides, a simulated frozen build derives app root + jsx + config + runtime + logs from the .exe, works from any working directory, falls back to the PyInstaller bundle and then the repository for the JSX assets, uses `%LOCALAPPDATA%` when the install folder is read only; diagnostics in source and in a broken install (missing JSX/config are `[FAIL]`, JSON serialisable), Illustrator is contacted only with `check_illustrator=True`, unreachable Illustrator is reported, a windowed build still gets a stream (console or file); `VERSION` == `pdf_ai_batch.__version__`, the spec covers the assets/COM libraries/no Illustrator/`COLLECT`/windowed-vs-debug, the build script runs the gates + verifies + smoke tests, the shortcut tool exists and is opt-in, `build/`+`dist/` are ignored, and no module outside the adapter imports win32com |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
 ## Partially working / not yet verified
@@ -299,17 +325,20 @@ Status: **Milestone 8 done - the plan of a JOB is recoverable: every real plan c
 
 ## Next milestone
 
-1. Milestone 9 - Windows packaging (`Cleanup AI 2026.exe`, `tools/build_release.ps1`,
-   production diagnostics and a user-writable log location).
-2. Milestone 10 - production hardening to v1.0.0 (page count / path / Illustrator /
-   file / queue / config / preview test matrix, soak test on 100+ real pages).
-3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
+1. Milestone 10 - production hardening to v1.0.0: the full test matrix (page counts
+   1 / 14 / 100 / 300+, 1 and 10 PDFs, spaces / Latvian / long / OneDrive paths,
+   Illustrator running or not, restart during recovery, missing or corrupt files,
+   locked or existing outputs, ERROR/INTERRUPTED/retry/skip/reset, config migration and
+   reconcile, 100+ page lazy previews), a soak test on 100+ real pages, then the
+   documentation freeze and the v1.0.0 tag.
+2. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
    real `.ait` template run (`template_mode = "saveas"`).
-4. "Stop after the current page" for the batch loop (now: close the window and
+3. "Stop after the current page" for the batch loop (now: close the window and
    `CONTINUE PROJECT`, or Ctrl+C plus `--continue`).
-5. Remember the last JOB (and its active document) between GUI sessions.
-6. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
-7. Optional: a thumbnail size preference, "CLEAR PREVIEW CACHE" in the GUI, a preview
+4. Remember the last JOB (and its active document) between GUI sessions.
+5. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
+6. Optional: a thumbnail size preference, "CLEAR PREVIEW CACHE" in the GUI, a preview
    of the assigned template next to the page preview, per document RECONCILE report and
-   "RECONCILE ALL", a report browser inside the GUI, manually named/pinned snapshots.
+   "RECONCILE ALL", a report browser inside the GUI, manually named/pinned snapshots,
+   an application icon (`assets/app.ico`) and an installer.
 

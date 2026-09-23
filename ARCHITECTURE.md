@@ -454,7 +454,39 @@ handling arrives with the queue milestone).
 4. Everything exchanged is JSON, defined in `pdf_ai_batch/core/contract.py` and
    mirrored by `jsx/cleanup.jsx` (`statsToContract`) and `jsx/worker.jsx`.
 
-## 10. Related documents
+## 11. Packaging and production paths (milestone 9)
+
+One build command produces the Windows application:
+
+    powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+    -> dist/Cleanup AI 2026/Cleanup AI 2026.exe + program/ + jsx/ + config/ + logs/ + docs/
+
+PyInstaller (`tools/cleanup_ai.spec`, one command in `tools/build_release.ps1`) is the
+packaging tool; the reasoning, layout and limitations live in `docs/PACKAGING.md`.
+Illustrator is never bundled - the executable talks to the installed Illustrator
+through COM (`adapters/illustrator.py`).
+
+Boundaries the packaging must keep:
+
+* **Paths** come from `pdf_ai_batch/paths.py`: `app_root()` is the executable's folder
+  (frozen) or the repository (source). Nothing is derived from the current working
+  directory, because Illustrator runs the worker with its own cwd. `jsx/` is searched
+  in the install folder, then the PyInstaller bundle, then the repository.
+* **Writable folders** (`runtime/` for the JSON handoff, `logs/` for application
+  diagnostics) fall back to `%LOCALAPPDATA%/Cleanup AI 2026/` when the install folder
+  is read only; job logs stay inside `JOB/LOG`.
+* **Version** has one source: `VERSION` -> `pdf_ai_batch.__version__`, the GUI, the
+  `--diagnose` report, the executable's version resource, the logs and every job report
+  (`app_version`).
+* **Startup diagnostics** (`pdf_ai_batch/diagnostics.py`) check the assets, pywin32, the
+  writable folders and whether Illustrator is installed (registry only); illustrator is
+  contacted only with `--with-illustrator` / the GUI health check. A packaged start
+  refuses to open a window it cannot work in and explains why.
+* **Development is untouched**: `python app.py` and `pytest` keep working, and no
+  product module has a frozen-only code path except `paths.py`, `diagnostics.py` and the
+  startup check in `app.py`.
+
+## 12. Related documents
 
 | Document | Content |
 | --- | --- |
