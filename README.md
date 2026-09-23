@@ -29,7 +29,7 @@ PDF page
 
 ## Status
 
-Version **0.8.0**. The Python pipeline, the JSX worker, the one page milestone, the
+Version **0.9.0**. The Python pipeline, the JSX worker, the one page milestone, the
 **persistent batch queue** (state.json, recovery, continue/retry, CLI), the
 **Tkinter GUI**, the **multi PDF project queue** (several PDFs per JOB, one plan
 and one set of states each, explicit RECONCILE), the **visual page browser**
@@ -37,10 +37,16 @@ and one set of states each, explicit RECONCILE), the **visual page browser**
 PyMuPDF on a worker thread), **bulk mapping with reusable presets** (range
 assignment, numbered auto mapping, a mapping clipboard that works across PDFs,
 `JOB/CONFIG/presets/*.json`), a **production preflight** (`[PREFLIGHT PROJECT]`,
-READY / NOT READY, OK / WARNING / ERROR) and **immutable job reports**
-(`JOB/LOG/reports/report_<stamp>.json` + `.txt` after every pass) are implemented and
-verified with real Illustrator runs. See `STATUS.md`, `docs/QUEUE_STATE.md` and
-`docs/GUI.md`.
+READY / NOT READY, OK / WARNING / ERROR), **immutable job reports**
+(`JOB/LOG/reports/report_<stamp>.json` + `.txt` after every pass) and a **plan
+history with undo and restore** (`JOB/CONFIG/history/`, every real plan change leaves
+an atomic snapshot) are implemented and verified with real Illustrator runs. See
+`STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
+
+A wrong edit is never final: `[UNDO PLAN CHANGE]` puts the previous plan back and
+`[RESTORE SNAPSHOT]` picks any of the last 100 snapshots - and a restore keeps the plan
+it replaces first, so it is reversible too. Queue states, outputs and the run history
+are never touched by a plan restore.
 
 Before a long project, one click answers "can this run at all?": PDFs, page counts,
 templates, duplicate outputs, the queue, Illustrator, disk space and the report folder
@@ -164,13 +170,15 @@ jsx/                          the only Illustrator side code
 pdf_ai_batch/                 Python orchestrator
   app.py  run_one.py  batch.py  paths.py  logging_setup.py
   core/  project, pdf_info, naming, template_mapper, config, mapping_rules,
-         preflight, report, contract, pagejob, state, queue, jsonio, validation
+         history, preflight, report, contract, pagejob, state, queue, jsonio,
+         validation
   preview/  renderer (PyMuPDF page rendering), cache (JOB/.cache/preview)
   gui/   main_window, controller, tasks, project_tab, pdf_tab, mapping_tab,
          bulk_dialogs, preview_panel, preview_loader, run_tab
   adapters/illustrator.py     the ONLY COM code (pywin32)
-  tests/                      379 pytest tests (contract, encoding, state, queue,
-                               mapping rules, preflight, reports, preview, GUI)
+  tests/                      410 pytest tests (contract, encoding, state, queue,
+                               mapping rules, history, preflight, reports, preview,
+                               GUI)
 
 src/                          legacy ScriptUI application (phase 1, kept as baseline)
 legacy/current_working_v10.jsx frozen baseline (generated, hashed)
@@ -359,8 +367,9 @@ flow: `docs/ARCHITECTURE.md`. The reference script and its analysis:
   mapping, `JOB/CONFIG/presets/`). **Done** (milestone 6).
 * P2 - production preflight (`[PREFLIGHT PROJECT]`, READY / NOT READY) and immutable
   job reports (`JOB/LOG/reports/`). **Done** (milestone 7).
-* P2 - plan snapshots / undo (`JOB/CONFIG/history/`). Planned (milestone 8), together
-  with Windows packaging (milestone 9).
+* P2 - plan snapshots / undo (`JOB/CONFIG/history/`, `[UNDO PLAN CHANGE]`,
+  `[RESTORE SNAPSHOT]`). **Done** (milestone 8). Windows packaging (milestone 9) is
+  next, then production hardening to v1.0.0.
 * P3 - SQLite history, ZIP handoff of `AI_OUT`, profiles ("conservative" /
   "aggressive" cleanup).
 

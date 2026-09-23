@@ -16,6 +16,8 @@ Modules
                      transition helpers, RUNNING -> INTERRUPTED recovery
     queue            the persistent batch queue (build/run/continue/retry/skip/reset)
     validation       preflight checks before Illustrator is touched
+    history          plan history: atomic snapshots of config.json, undo, restore
+                     (JOB/CONFIG/history) - plan data only, never runtime state
     preflight        production preflight: the whole project in one READY / NOT READY
                      report (aggregates validation, does not duplicate it)
     report           immutable job reports after every pass (JOB/LOG/reports)
@@ -36,6 +38,7 @@ __all__ = [
     "state",
     "queue",
     "validation",
+    "history",
     "preflight",
     "report",
 ]

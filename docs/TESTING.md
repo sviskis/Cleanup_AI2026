@@ -270,6 +270,25 @@ with `DONE=8 ERROR=1` and the error row; `RETRY PROJECT ERRORS` -> `report ...tx
 `DONE=9`, `ERROR=0`, `retries=1`; the report counts equal `state.json`
 (`WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED`); both reports still on disk.
 
+## 0i. Plan history: snapshots, undo, restore (milestone 8)
+
+`JOB/CONFIG/history/<YYYY-MM-DD_HHMMSS>.json` holds the plan that a real change
+replaced; `[UNDO PLAN CHANGE]` and `[RESTORE SNAPSHOT]` put an older plan back and
+always keep the plan they replace first.
+
+| Test file | What it proves |
+| --- | --- |
+| `tests/test_history.py` (17) | the snapshot before a bulk mutation holds the previous plan (with documents/pages/config-version metadata); the payload is plan data only (no `state`, `attempts`, `run_id`, `error_type`); names are timestamps and are never reused (`-2`); no plan -> no snapshot (and an empty dict is refused); undo restores the exact previous config and is itself undoable; nothing to undo returns `None`; undo skips a corrupt snapshot; restore snapshots the current plan first (kind `restore`); a corrupt or wrong-version snapshot is refused and the plan stays untouched; retention keeps the newest and never a pinned copy; `keep=0` disables pruning; a failing write leaves no file and no config change; `state.json` and the outputs stay byte identical; a v1 config is snapshotted as v2; a two-document UTF-8 plan round trips without mojibake; human readable summaries; newest first ordering by modification time |
+| `tests/test_gui_history.py` (13) | the controller funnel snapshots before the change (`bulk-assign`, `preset`, `auto-map`, `plan` kinds all recorded); a no-op edit creates no snapshot; an unwritable snapshot blocks the mutation; UNDO restores the previous plan and keeps the queue (ERROR + attempts survive, defaults resolve again); a second UNDO brings the undone state back; nothing to undo is reported; RESTORE puts an older plan back and adds the recovery copy; restore accepts a name or a path and rejects an unknown one; a corrupt snapshot is refused without touching the plan; the list survives a corrupt file; the history and the restored plan survive a GUI reopen |
+
+Real acceptance: `temp/run_gui_acceptance_m8.py` (11 steps, evidence
+`temp/gui_acceptance_m8.txt`) - AUTO ASSIGN materialises the plan (no snapshot yet),
+`ASSIGN TO RANGE 6-35` creates a snapshot equal to the previous plan, `UNDO` restores
+it and adds the recovery copy, a second edit + preset + `RESTORE SNAPSHOT` keep the
+plan they replace, the reopened GUI lists the same snapshots, `state.json` counts and
+all 36 `job_id`s are unchanged, every history file is plan-only and Illustrator was
+never touched.
+
 ## 1. Automated checks
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1

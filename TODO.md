@@ -55,6 +55,11 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
       ERROR), and every pass writes `JOB/LOG/reports/report_<stamp>.json` + `.txt`
       (`core/report.py`, `BatchQueue.finish_pass`, never overwritten). The CLI has
       `--preflight-project`. See `docs/TESTING.md` §0g and §0h.
+- [x] Plan snapshots + undo (milestone 8): every real plan change snapshots the plan it
+      replaces into `JOB/CONFIG/history/` (`core/history.py`, atomic, plan data only,
+      retention 100, pinned copies kept); `[UNDO PLAN CHANGE]` goes one step back and
+      `[RESTORE SNAPSHOT]` restores an older copy after keeping the current plan, so a
+      restore is reversible too. See `docs/TESTING.md` §0i.
       Done: `pdf_ai_batch/preview/` (PyMuPDF renderer + disposable
       `JOB/.cache/preview` keyed on pdf + mtime + size + page + render size),
       `gui/preview_loader.py` (one worker thread, priority queue, generations, event

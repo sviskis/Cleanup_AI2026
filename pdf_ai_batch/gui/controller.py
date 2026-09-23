@@ -30,6 +30,7 @@ validate -> atomic save -> queue rebuild.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import tempfile
@@ -37,10 +38,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from .. import paths
+from .. import __version__, paths
 from ..adapters.illustrator import IllustratorAdapter
 from ..core import config as cfg
-from ..core import mapping_rules, pagejob, preflight, report, state, validation
+from ..core import history, mapping_rules, pagejob, preflight, report, state, validation
 from ..core.pdf_info import PdfPageCountError, count_pages
 from ..core.project import JobProject, ProjectError
 from ..core.queue import BatchQueue, BatchSummary, QueueError
@@ -48,6 +49,11 @@ from ..core.template_mapper import build_page_plan, default_template, list_templ
 from ..preview.cache import PreviewCache
 
 LOGGER_NAME = "pdf_ai_batch.gui"
+
+
+def _fingerprint(config: dict) -> str:
+    """Stable text form of a plan, used to detect a mutation that changed nothing."""
+    return json.dumps(config, sort_keys=True, ensure_ascii=False, default=str)
 
 
 @dataclass(frozen=True)
@@ -358,7 +364,7 @@ class AppController:
         target = Path(str(pdf)).name if pdf else (self._active_pdf.name if self._active_pdf else None)
         if not target:
             raise ControllerError("Nav izvēlēts PDF")
-        self._before_mutation(f"RECONCILE {target}")
+        self._before_mutation(f"RECONCILE {target}", history.KIND_RECONCILE)
         try:
             report = self.queue.reconcile_document(target)
         except (ProjectError, PdfPageCountError, OSError) as exc:
@@ -749,6 +755,7 @@ class AppController:
         self._mapping_mutation(
             f"{'iespējoju' if enabled else 'izslēdzu'} lapas",
             lambda config: mapping_rules.set_enabled(config, document, wanted, enabled),
+            kind=history.KIND_PLAN,  # a plain plan edit, not a bulk mapping rule
         )
         return self.mapping_rows()
 
@@ -830,6 +837,7 @@ class AppController:
             lambda config: mapping_rules.auto_map_by_number(
                 config, pdf.name, page_count=page_count, template_dir=project.template_dir
             ),
+            kind=history.KIND_AUTOMAP,
         )
         self.log.info(
             "Numerētā piešķire: %s lapas, neskaidri %s, nenumurēti %s",
@@ -870,7 +878,9 @@ class AppController:
             config.update(updated)
             return page_count
 
-        assigned = self._mutate_config("automātiskā template piešķire", mutate)
+        assigned = self._mutate_config(
+            "automātiskā template piešķire", mutate, kind=history.KIND_AUTOMAP
+        )
         self.log.info("Automātiskā template piešķire: %s lapas", assigned)
         return self.mapping_rows()
 
@@ -1002,6 +1012,7 @@ class AppController:
             lambda config: mapping_rules.apply_preset(
                 config, pdf_name, preset, replace_all=replace_all
             ),
+            kind=history.KIND_PRESET,
         )
         self.log.info(
             "Preset %s: %s lapas mainītas, %s atiestatītas, %s ārpus dokumenta",
@@ -1075,28 +1086,58 @@ class AppController:
 
     # --------------------------------------------------------------- mutating
 
-    def _before_mutation(self, reason: str) -> None:
-        """Hook in front of every plan mutation (milestone 8 snapshots here).
+    def _before_mutation(self, reason: str, kind: str = history.KIND_PLAN) -> None:
+        """Hook in front of every plan mutation: snapshot the plan that will change.
 
-        Everything that can change `config.json` calls this first, so a project
-        history/undo feature only has to extend this one method.
+        This is the single place the whole project history comes from
+        (`JOB/CONFIG/history/`), so an undo can always put the previous plan back. A
+        snapshot that cannot be written **stops the mutation** with a clear error -
+        changing production data without a copy of the previous state is exactly what
+        this milestone exists to prevent. A JOB without `config.json` has no plan yet,
+        so the first edit simply has nothing to snapshot.
         """
-        self.log.debug("Plāna izmaiņas: %s", reason)
+        project = self._project
+        if project is None:
+            return
+        if not Path(project.config_path).is_file():
+            return
+        try:
+            info = history.snapshot(project, reason=reason, kind=kind, app_version=__version__)
+        except history.HistoryError as exc:
+            raise ControllerError(f"Plāna kopiju nevar izveidot: {exc}") from exc
+        self.log.debug("Plāna kopija: %s (%s)", info.name, reason)
 
-    def _mutate_config(self, reason: str, mutate: Callable[[dict], object]) -> object:
-        """The single funnel for plan changes: load -> hook -> mutate -> validate -> save.
+    def _mutate_config(
+        self, reason: str, mutate: Callable[[dict], object], *, kind: str = history.KIND_PLAN
+    ) -> object:
+        """The single funnel for plan changes: load -> mutate -> snapshot -> save.
 
         `mutate` receives the version 2 config (created for the active document when it
         did not exist yet) and may change it in place; its return value is passed back
-        to the caller. Validation plus the atomic save plus the queue merge happen here
-        for every plan change, so no GUI code writes config.json on its own and
-        milestone 8 has exactly one place to snapshot.
+        to the caller. The plan is saved when it differs from what is on disk - which
+        includes materialising a plan for a JOB that has no `config.json` yet - and
+        exactly then a history snapshot of the previous state is written first. A
+        mutation that changes nothing leaves no snapshot and never disturbs the queue.
         """
         config = self._plan_config()
-        self._before_mutation(reason)
         result = mutate(config)
+        if self._plan_is_on_disk(config):
+            self.log.debug("Nav izmaiņu: %s", reason)
+            return result
+        self._before_mutation(reason, kind)
         self._write_config(config, reason=reason)
         return result
+
+    def _plan_is_on_disk(self, config: dict) -> bool:
+        """Is this plan already exactly what config.json holds?"""
+        project = self._project
+        if project is None or not Path(project.config_path).is_file():
+            return False
+        stored = cfg.load_config(project.config_path)
+        if not stored:
+            return False
+        plan, _note = cfg.migrate_config(config)
+        return _fingerprint(stored) == _fingerprint(plan)
 
     def _plan_config(self) -> dict:
         """The config a mutation works on: a complete plan, even without a selection.
@@ -1109,7 +1150,9 @@ class AppController:
             return cfg.load_config(self._require_project().config_path)
         return self._ensure_config()
 
-    def _mapping_mutation(self, reason: str, mutate: Callable[[dict], object]) -> object:
+    def _mapping_mutation(
+        self, reason: str, mutate: Callable[[dict], object], *, kind: str = history.KIND_BULK
+    ) -> object:
         """`_mutate_config` for `core.mapping_rules`: core errors become ControllerError.
 
         The tabs only ever catch `ControllerError`, so the core's `MappingError` /
@@ -1117,7 +1160,7 @@ class AppController:
         here instead of leaking a second exception type into the GUI.
         """
         try:
-            return self._mutate_config(reason, mutate)
+            return self._mutate_config(reason, mutate, kind=kind)
         except (mapping_rules.MappingError, mapping_rules.PresetError) as exc:
             raise ControllerError(str(exc)) from exc
 
@@ -1210,6 +1253,69 @@ class AppController:
         if self._queue is None:
             return None
         return self._queue.last_report_paths
+
+    # ------------------------------------------------- plan history / undo (M8)
+
+    def snapshots(self, *, limit: int | None = None) -> list[history.SnapshotInfo]:
+        """The plan snapshots of the active JOB, newest first (never raises)."""
+        project = self._require_project()
+        return history.list_snapshots(project, limit=limit)
+
+    def snapshot_count(self) -> int:
+        return len(self.snapshots())
+
+    def _save_restored_config(self, config: dict) -> None:
+        """Write a restored plan through the same validate + save + queue path."""
+        self._write_config(config, reason="plāns atjaunots no vēstures")
+
+    def undo_plan_change(self) -> history.RestoreResult | None:
+        """[UNDO PLAN CHANGE]: put the previous plan back (reversibly).
+
+        The restore snapshots the current plan first, so an undo can be undone with
+        `[UNDO PLAN CHANGE]` again. Returns None when there is nothing to undo.
+        """
+        project = self._require_project()
+        try:
+            result = history.undo_last(
+                project,
+                app_version=__version__,
+                write_config=self._save_restored_config,
+            )
+        except history.HistoryError as exc:
+            raise ControllerError(str(exc)) from exc
+        if result is None:
+            self.log.info("UNDO: nav ko atgriezt")
+            return None
+        self.log.info("UNDO: %s", result.summary())
+        return result
+
+    def restore_snapshot(self, name_or_path: str | Path) -> history.RestoreResult:
+        """[RESTORE SNAPSHOT]: put an older plan back (the current one is kept first)."""
+        project = self._require_project()
+        target = None
+        wanted = str(name_or_path)
+        for info in history.list_snapshots(project):
+            if info.name == wanted or info.stamp == wanted or info.path.name == wanted:
+                target = info
+                break
+        if target is None:
+            candidate = Path(wanted)
+            if candidate.is_file():
+                target = history.info_of(candidate)
+        if target is None:
+            raise ControllerError(f"Snapshot nav atrasts: {wanted}")
+        try:
+            result = history.restore_snapshot(
+                project,
+                target,
+                reason=f"atjaunots ar GUI ({target.reason})",
+                app_version=__version__,
+                write_config=self._save_restored_config,
+            )
+        except history.HistoryError as exc:
+            raise ControllerError(str(exc)) from exc
+        self.log.info("RESTORE: %s", result.summary())
+        return result
 
 
     def validation_failures(self) -> list[str]:

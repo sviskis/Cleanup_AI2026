@@ -19,7 +19,13 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from ..core import state
-from .bulk_dialogs import DEFAULT_CHOICE, PresetDialog, RangeAssignDialog, SavePresetDialog
+from .bulk_dialogs import (
+    DEFAULT_CHOICE,
+    PresetDialog,
+    RangeAssignDialog,
+    SavePresetDialog,
+    SnapshotDialog,
+)
 from .controller import ControllerError, MappingRow
 from .context import GuiContext
 from .preview_panel import PreviewPanel
@@ -131,10 +137,11 @@ class MappingTab(ttk.Frame):
 
     #: replaced by tests so the chooser can be answered without a user
     chooser_factory: type[TemplateChooser] = TemplateChooser
-    #: the dialogs of the bulk actions (milestone 6), same seam idea
+    #: the dialogs of the bulk actions (milestone 6) and history (milestone 8)
     range_dialog_factory: type[RangeAssignDialog] = RangeAssignDialog
     save_preset_dialog_factory: type[SavePresetDialog] = SavePresetDialog
     preset_dialog_factory: type[PresetDialog] = PresetDialog
+    snapshot_dialog_factory: type[SnapshotDialog] = SnapshotDialog
 
     def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
         super().__init__(parent, padding=8)
@@ -179,7 +186,9 @@ class MappingTab(ttk.Frame):
             ("SAVE PRESET", self.on_save_preset, 2, 2),
             ("LOAD / APPLY PRESET", self.on_apply_preset, 2, 3),
             ("AUTO ASSIGN TEMPLATES", self.on_auto_assign, 2, 4),
-            ("RECONCILE PDF", self.on_reconcile, 2, 5),
+            ("RECONCILE PDF", self.on_reconcile, 3, 0),
+            ("UNDO PLAN CHANGE", self.on_undo, 3, 1),
+            ("RESTORE SNAPSHOT", self.on_restore, 3, 2),
         )
         for label, handler, row, column in actions:
             button = ttk.Button(bar, text=label, command=handler)
@@ -387,6 +396,42 @@ class MappingTab(ttk.Frame):
             self.ctx.report(str(exc), error=True)
             return
         self.ctx.report(f"Nokopēts: {clipboard.summary()}")
+
+    def on_restore(self) -> None:
+        """RESTORE SNAPSHOT: pick an older plan from JOB/CONFIG/history and put it back."""
+        try:
+            snapshots = self.ctx.controller.snapshots()
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        if not snapshots:
+            self.ctx.report("Nav nevienas plāna kopijas (JOB/CONFIG/history)", error=True)
+            return
+        dialog = self.snapshot_dialog_factory(self.ctx.window, snapshots=snapshots)
+        self._wait(dialog)
+        name = getattr(dialog, "result", None)
+        if not name:
+            return
+        try:
+            result = self.ctx.controller.restore_snapshot(name)
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report("RESTORE: " + result.summary())
+        self.ctx.refresh()
+
+    def on_undo(self) -> None:
+        """UNDO PLAN CHANGE: put the previous plan back (the restore is reversible)."""
+        try:
+            result = self.ctx.controller.undo_plan_change()
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        if result is None:
+            self.ctx.report("UNDO: nav ko atgriezt (nav nevienas plāna kopijas)")
+            return
+        self.ctx.report("UNDO: " + result.summary())
+        self.ctx.refresh()
 
     def on_paste_mapping(self) -> None:
         pages = self.selected_pages()

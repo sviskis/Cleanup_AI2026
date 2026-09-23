@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.8.0
+Version: 0.9.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 7 done - `[PREFLIGHT PROJECT]` answers "can this project run now?" with one READY / NOT READY report (PROJECT / PDF / TEMPLATES / OUTPUT / QUEUE / ILLUSTRATOR / SYSTEM, OK / WARNING / ERROR, RUN blocked only by a real ERROR), and every pass writes an immutable report into `JOB/LOG/reports/` (JSON canonical + TXT human readable, never overwritten); a real 13 step acceptance run (2 PDFs, 9 pages, a locked output as ERROR, retry, count comparison against state.json) passed**
+Status: **Milestone 8 done - the plan of a JOB is recoverable: every real plan change snapshots the plan it replaces into `JOB/CONFIG/history/` (atomic, plan data only, retention 100, pinned copies kept), and `[UNDO PLAN CHANGE]` / `[RESTORE SNAPSHOT]` put an older plan back - a restore keeps the current plan first, so it is reversible too; a real 11 step acceptance run (36 page JOB, a range edit, undo, preset, restore an older snapshot, reopen, state/queue unchanged) passed**
 
 ## Working
 
@@ -198,6 +198,31 @@ Status: **Milestone 7 done - `[PREFLIGHT PROJECT]` answers "can this project run
 * Details and the real evidence: `docs/GUI.md` §Production preflight, `docs/TESTING.md`
   §0g and `temp/gui_acceptance_m7.txt`.
 
+### Plan snapshots, undo and restore (milestone 8)
+
+* `core/history.py` - the plan history of a JOB, in `JOB/CONFIG/history/`:
+  * one file per snapshot (`<YYYY-MM-DD_HHMMSS>.json`) holding the exact plan plus
+    metadata (version, created, kind, reason, job, app version, document/page counts,
+    pinned, config version). **Plan data only**: no state, attempts, run ids or errors.
+  * `snapshot()` writes atomically (a failed write raises `HistoryError` and leaves
+    nothing behind), `load_snapshot()` validates version + plan so a corrupt copy can
+    never be applied, `list_snapshots()` sorts newest first (mtime, so a `-2` copy from
+    the same second is newer), an unreadable file is listed but never restored.
+  * `undo_last()` restores the newest snapshot whose plan differs from the current one;
+    `restore_snapshot()` snapshots the CURRENT plan first ("recovery copy") and then
+    writes the restored plan atomically, so **a restore is reversible too**.
+  * retention `DEFAULT_RETENTION` = 100 snapshots per JOB; a `pinned: true` snapshot is
+    never pruned (the hook for manually named snapshots later). No database.
+* One funnel: `AppController._mutate_config` -> `_plan_is_on_disk` (a no-op edit is not
+  saved and not snapshotted) -> `_before_mutation(reason, kind)` (the snapshot) ->
+  `validate_config` -> atomic save -> queue rebuild. Kinds: `bulk-assign`, `preset`,
+  `auto-map`, `reconcile`, `undo`, `restore`, `plan`.
+* MAPPING tab: `[UNDO PLAN CHANGE]` (one step back) and `[RESTORE SNAPSHOT]`
+  (`bulk_dialogs.SnapshotDialog` lists timestamp, reason, `n PDF, m lapas` and marks
+  pinned copies).
+* Demonstration and evidence: `docs/GUI.md` §Plan history and
+  `temp/gui_acceptance_m8.txt`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -230,6 +255,9 @@ Status: **Milestone 7 done - `[PREFLIGHT PROJECT]` answers "can this project run
 | Production preflight + reports, real GUI + Illustrator, 2 PDFs / 9 pages (`temp/run_gui_acceptance_m7.py`, `temp/gui_acceptance_m7.txt`) | PASS, 13 steps: `[PREFLIGHT PROJECT]` on the real GUI -> `Overall READY` (PDF OK, Pages 9, Templates OK, Missing templates 0, Duplicate outputs 0, Output writable YES, Illustrator READY 29.8.3, Disk space OK (97 GB), Queue READY); template `001_cover.ai` removed -> `NOT READY` with `[TEMPLATES] Konfigurētie template: trūkst: 001_cover.ai` and RUN blocked; restored -> `READY`; real run of 9 pages with a locked output + overwrite -> exactly one `ERROR` (magazine l.2); the pass wrote `report_20260923-214637.txt/.json` (`RUN ALL ENABLED`, DONE=8 ERROR=1, error row for page 2); RETRY ERRORS -> 9 DONE with `report_20260923-214644.txt/.json` (`RETRY ERRORS`, ERROR=0, `retries=1`); report counts `WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED` == state.json (0/0/9/0/0/0); both reports still on disk (immutable); 9 outputs; MASTER SHA256 unchanged; Illustrator documents 0 |
 | Preflight (unit) | 25 tests: clean project READY with all seven sections OK; read-only (config/state/AI_OUT untouched); Illustrator contacted only when asked; unavailable/broken COM is an ERROR; missing PDF (warning with another document, ERROR as the only one); CONFIG STALE (warning next to a healthy document, ERROR alone, RECONCILE hint); template named in config but missing (ERROR); missing default template (ERROR); empty template folder (ERROR); unwritable AI_OUT (ERROR); duplicate outputs inside a document and across documents (ERROR); existing output -> SKIP warning; stale RUNNING / item outside the plan (warnings); corrupt state.json (warning, still READY); disk thresholds (warning / error / unreadable drive); TXT and JSON agree |
 | Job reports (unit) | 16 tests: duration formatting; counts match state.json; objects processed and retries; ERROR/INTERRUPTED rows with type, message and attempts; report from disk without a summary; JSON + TXT written into `JOB/LOG/reports`; TXT/JSON consistency for every state; immutable (`report_<stamp>-2.json` beside the first, first untouched); writing touches neither config nor state; UTF-8 Latvian job/document names without mojibake; broken report file handled; a report per pass (RUN ALL / RUN SELECTED / empty pass); an aborted pass names the reason; report counts stay in sync after a retry; a failed report write never breaks a pass |
+| Plan snapshots + undo, real GUI, 36 page JOB (`temp/run_gui_acceptance_m8.py`, `temp/gui_acceptance_m8.txt`) | PASS, 11 steps: AUTO ASSIGN TEMPLATES materialises the plan (0 snapshots before it); ASSIGN TO RANGE 6-35 -> `002_intro.ai` creates snapshot 1 whose content is byte-equal to the previous plan (meta: 1 PDF / 36 pages, no `state`/`attempts` key); `[UNDO PLAN CHANGE]` restores the original mapping and adds the recovery copy (`kind=restore`); a second range edit + APPLIED PRESET produce snapshots 2-4; `[RESTORE SNAPSHOT]` of an older copy puts that plan back and keeps the pre-restore plan; after a GUI reopen the same 5 snapshots are listed and the plan persists; `state.json` counts unchanged (`WAITING 36`) and all 36 `job_id`s identical; every history file is plan-only; Illustrator documents 0 |
+| Plan history (unit) | 17 tests: snapshot before a bulk mutation keeps the previous plan (with documents/pages/config version metadata), plan-data-only payload, timestamp names never reused (`-2`), no snapshot without a plan, undo restores the exact previous config (and is itself undoable), undo with nothing to undo returns None, undo survives a corrupt snapshot, restore snapshots the current plan first and refuses a corrupt/wrong-version file, retention keeps the newest and never a pinned copy, `keep=0` disables pruning, a failed write leaves no file and no config change, history never touches state.json or outputs, v1 config is snapshotted as v2, multi-PDF plans with UTF-8 names round trip without mojibake, human readable summaries |
+| Plan history through the GUI | 13 tests: a bulk edit snapshots the plan before the change (reason + `bulk-assign` kind), every mutation kind is recorded (`bulk-assign`, `preset`, `auto-map`, `plan`), a no-op edit creates no snapshot, an unwritable snapshot blocks the mutation, UNDO restores the previous plan and keeps the queue states (ERROR stays ERROR with its attempts), undo is itself undoable, undo without history reports nothing, RESTORE puts an older plan back (recovery copy listed), restore accepts a path and rejects an unknown name, a corrupt snapshot is refused without touching the plan, the list survives a corrupt file, and the history survives a GUI reopen |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
 ## Partially working / not yet verified
@@ -271,9 +299,10 @@ Status: **Milestone 7 done - `[PREFLIGHT PROJECT]` answers "can this project run
 
 ## Next milestone
 
-1. Milestone 8 - plan snapshots + undo (`JOB/CONFIG/history/`, `[UNDO PLAN CHANGE]`,
-   `[RESTORE SNAPSHOT]`); the hook already exists (`AppController._before_mutation`).
-2. Milestone 9 - Windows packaging (`Cleanup AI 2026.exe`, `tools/build_release.ps1`).
+1. Milestone 9 - Windows packaging (`Cleanup AI 2026.exe`, `tools/build_release.ps1`,
+   production diagnostics and a user-writable log location).
+2. Milestone 10 - production hardening to v1.0.0 (page count / path / Illustrator /
+   file / queue / config / preview test matrix, soak test on 100+ real pages).
 3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
    real `.ait` template run (`template_mode = "saveas"`).
 4. "Stop after the current page" for the batch loop (now: close the window and
@@ -282,5 +311,5 @@ Status: **Milestone 7 done - `[PREFLIGHT PROJECT]` answers "can this project run
 6. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
 7. Optional: a thumbnail size preference, "CLEAR PREVIEW CACHE" in the GUI, a preview
    of the assigned template next to the page preview, per document RECONCILE report and
-   "RECONCILE ALL", a report browser inside the GUI.
+   "RECONCILE ALL", a report browser inside the GUI, manually named/pinned snapshots.
 

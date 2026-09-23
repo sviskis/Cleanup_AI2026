@@ -185,6 +185,30 @@ Layout note: the mapping table keeps the selection as the single source of truth
 thumbnail click, a range action and the preview buttons all act on the same rows. While
 a batch runs, all bulk buttons are disabled (`set_busy`).
 
+## Plan history: snapshots, undo, restore (milestone 8)
+
+Every **real** plan change first writes a snapshot of the plan it replaces into
+`JOB/CONFIG/history/` (atomic, plan data only), so a wrong bulk action is one click
+away from being undone. The MAPPING action bar has two more buttons:
+
+| Button | What it does |
+| --- | --- |
+| `UNDO PLAN CHANGE` | puts the previous plan back (the newest snapshot that differs from the current plan). The restore also snapshots the current plan, so the undo itself can be undone - and pressing it again toggles back. |
+| `RESTORE SNAPSHOT` | lists every snapshot with timestamp, reason and size (`1 PDF, 36 lapas`) and restores the chosen one. Before it writes anything it keeps the current plan. |
+
+Rules:
+
+* only **real** changes are recorded: pressing an action that changes nothing writes no
+  snapshot and does not touch the queue. An explicit action on a JOB that has no
+  `config.json` yet materialises the plan (and needs no snapshot - there was nothing).
+* a snapshot holds the plan and its metadata only - never `state.json`, attempts, run
+  ids or errors; a corrupt snapshot is listed but can never be restored.
+* retention keeps the newest 100 snapshots per JOB; a `pinned` one is never deleted.
+* a plan restore rebuilds the queue from the restored plan but leaves the run history
+  alone: a page that was `DONE` stays `DONE`, an `ERROR` keeps its attempts.
+* history lives in the JOB, so closing and reopening the GUI keeps it; the files can be
+  backed up with the JOB.
+
 ## Production preflight (milestone 7)
 
 `[PREFLIGHT PROJECT]` on the RUN tab is one action that answers "can this project run

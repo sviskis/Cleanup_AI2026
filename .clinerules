@@ -1,10 +1,16 @@
 # Cline rules for Cleanup_AI2026
 
-**Current architecture (v0.2.0): Python orchestrator + Illustrator JSX worker.**
+**Current architecture (v0.9.0): Python orchestrator + Illustrator JSX worker.**
 See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
 
 ## Hard rules
 
+- **One plan history.** Every `config.json` change snapshots the plan it replaces into
+  `JOB/CONFIG/history/` through `core/history.py` (atomic, plan data only, retention
+  with pinned copies kept). The snapshot is written by `AppController._before_mutation`
+  and only when the plan really differs from `config.json`; a restore snapshots the
+  current plan first, so it is reversible. Never store runtime state in a snapshot and
+  never restore one without validating it (`load_snapshot`).
 - **One preflight, one report writer.** `pdf_ai_batch/core/preflight.py` is the only
   project wide readiness check (it aggregates `validation.py`, `config.validate_config`,
   the project plan and the state model - never duplicate a check) and
@@ -21,10 +27,11 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
   GUI collects input (`gui/bulk_dialogs.py`) and calls `AppController`, which never
   parses a range or decides a mapping itself.
 - **One mutation funnel for the plan.** Every `config.json` change goes through
-  `AppController._mutate_config` -> `_before_mutation(reason)` -> validate -> atomic
-  `save_config` -> `BatchQueue.build_queue`. `_before_mutation` is the single hook for
-  plan history/undo (milestone 8); never write `config.json` anywhere else, never edit
-  it as raw JSON, and keep `cfg.save_config` called from exactly one place in `gui/`.
+  `AppController._mutate_config` -> `_plan_is_on_disk` (a no-op is not saved and not
+  snapshotted) -> `_before_mutation(reason, kind)` (the history snapshot) -> validate ->
+  atomic `save_config` -> `BatchQueue.build_queue`. Never write `config.json` anywhere
+  else, never edit it as raw JSON, and keep `cfg.save_config` called from exactly one
+  place in `gui/`.
 - **One cleanup engine.** It lives in `jsx/cleanup.jsx` and nowhere else. Never
   copy the cleanup algorithm into another file.
 - **One plan per document, identity is never the page number alone.** A queue item

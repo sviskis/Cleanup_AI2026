@@ -182,6 +182,77 @@ class RangeAssignDialog(tk.Toplevel):
         self.destroy()
 
 
+class SnapshotDialog(tk.Toplevel):
+    """RESTORE SNAPSHOT: pick an older plan from `JOB/CONFIG/history`.
+
+    The list shows what every snapshot holds (timestamp, reason, how many documents and
+    pages) and the current plan is snapshotted first, so a restore can be undone.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        snapshots: list,
+        current: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.title("Atjaunot plāna kopiju")
+        self.transient(parent)
+        self.resizable(True, True)
+        self.result: str | None = None
+        self._snapshots = list(snapshots)
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+        header = "Plāna kopijas mapē JOB/CONFIG/history (jaunākās vispirms)"
+        if current:
+            header += f" | pašreizējais plāns: {current}"
+        ttk.Label(self, text=header).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
+
+        self.listbox = tk.Listbox(self, height=12, width=76, exportselection=False)
+        self.listbox.grid(row=1, column=0, sticky="nsew", padx=10)
+        for info in self._snapshots:
+            self.listbox.insert(tk.END, info.summary())
+        self.listbox.bind("<Double-1>", lambda _event: self._accept())
+
+        ttk.Label(
+            self,
+            text="Pirms atjaunošanas pašreizējais plāns tiek nokopēts, tāpēc atjaunošanu var arī atcelt.",
+            foreground="#666",
+        ).grid(row=2, column=0, sticky="w", padx=10, pady=(6, 0))
+
+        buttons = ttk.Frame(self, padding=10)
+        buttons.grid(row=3, column=0, sticky="ew")
+        for index in range(2):
+            buttons.columnconfigure(index, weight=1)
+        ttk.Button(buttons, text="ATJAUNOT", command=self._accept).grid(
+            row=0, column=0, sticky="ew", padx=2
+        )
+        ttk.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
+            row=0, column=1, sticky="ew", padx=2
+        )
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        if self._snapshots:
+            self.listbox.selection_set(0)
+
+    def _selected(self):
+        selection = self.listbox.curselection()
+        if not selection:
+            return None
+        return self._snapshots[selection[0]]
+
+    def _accept(self) -> None:
+        info = self._selected()
+        self.result = None if info is None else info.name
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.destroy()
+
+
 class PresetDialog(tk.Toplevel):
     """LOAD / APPLY PRESET: pick a preset, read its preview, then apply it.
 

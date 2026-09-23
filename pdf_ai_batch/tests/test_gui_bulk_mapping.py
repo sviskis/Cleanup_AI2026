@@ -79,15 +79,15 @@ def test_gui_controller_does_not_implement_mapping_rules_itself():
     source = Path(controller.__file__).read_text(encoding="utf-8")
 
     # the core module is the one and only implementation
-    assert "from ..core import mapping_rules" in source
+    assert "from ..core import history, mapping_rules" in source
     assert "mapping_rules.parse_pages" in source
     # and the controller never re-implements it with a regex or a manual split
     assert "re.compile" not in source
     assert ".split(\"-\")" not in source
     assert "split(',')" not in source
-    # no config writing outside the single funnel
+    # no config writing outside the single funnel (json.dumps for the no-op check is fine)
     assert source.count("cfg.save_config(") == 1
-    assert "json.dump" not in source
+    assert "json.dump(" not in source
 
 
 # -------------------------------------------------------------- bulk assignment
@@ -153,13 +153,28 @@ def test_auto_assign_templates_still_works_positionally(gui):
     ]
     # pages beyond the numbered pool use the default (MASTER) template
     assert [row.template for row in rows][3:] == ["MASTER_AI_TEMPLATE.ai"] * 9
+    # the fixture's plan already was the positional plan, so nothing had to change
+    assert gui.snapshot_count() == 0
+
+
+def test_auto_assign_templates_saves_a_real_change(gui):
+    gui.use_default_template([1, 2, 3])  # a real change: the three pages lose their template
+    assert stored_templates(gui)[:3] == [None, None, None]
+
+    gui.auto_assign_templates()
+
+    assert stored_templates(gui)[:3] == ["001_cover.ai", "002_intro.ai", "003_separator.ai"]
     assert stored_templates(gui)[3:] == [None] * 9
+    assert gui.snapshot_count() == 1  # the auto assign snapshot (nothing existed before it)
 
 
 # ------------------------------------------------------- numbered auto mapping
 
 
 def test_auto_map_by_template_number_through_the_controller(gui):
+    gui.use_default_template([1, 2, 3])  # so the numbered mapping really changes something
+    assert stored_templates(gui)[:3] == [None, None, None]
+
     report = gui.auto_map_by_template_number()
 
     assert report["assigned"] == {1: "001_cover.ai", 2: "002_intro.ai", 3: "003_separator.ai"}
@@ -334,33 +349,44 @@ def test_preset_of_a_larger_document_applies_with_reported_conflicts(gui, make_p
 
 
 def test_every_config_mutation_goes_through_the_single_funnel(gui, monkeypatch):
-    """Milestone 8 will snapshot in one place: prove that place is really used."""
-    calls: list[str] = []
+    """Milestone 8 snapshots in one place: prove that place is really used."""
+    calls: list[tuple[str, str]] = []
     original = gui._before_mutation
-    monkeypatch.setattr(
-        gui, "_before_mutation", lambda reason: (calls.append(reason), original(reason))[0]
-    )
 
-    gui.parse_pages("1-3")  # reading is not a mutation
+    def spy(reason: str, kind: str = "plan") -> None:
+        calls.append((reason, kind))
+        original(reason, kind)
+
+    monkeypatch.setattr(gui, "_before_mutation", spy)
+
+    # reading is not a mutation (the range parser, the clipboard, a saved preset file)
+    gui.parse_pages("1-3")
+    gui.save_preset("caur_kanālu")
     assert calls == []
 
-    gui.assign_template_to_range([1], "001_cover.ai")
-    gui.use_default_template([1])
-    gui.clear_pages([1])
-    gui.set_enabled([1], False)
-    gui.auto_assign_templates()
-    gui.copy_mapping([1])          # reading, not a mutation
-    gui.paste_mapping([2])
-    gui.save_preset("caur_kanālu")  # writes a preset file, not the plan
-    gui.apply_preset("caur_kanālu")
-    gui.auto_map_by_template_number()
+    gui.assign_template_to_range([5], "001_cover.ai")
+    assert len(calls) == 1 and "template piešķire" in calls[0][0]
+    assert calls[0][1] == "bulk-assign"
 
-    # 8 real plan mutations, and every one of them announced itself first
-    assert len(calls) == 8
-    assert any("template piešķire" in reason for reason in calls)
-    assert any("preset caur_kanālu" in reason for reason in calls)
-    assert any("numerētā" in reason for reason in calls)
-    assert any("mapping ielīmēšana" in reason for reason in calls)
-    assert any("lapas" in reason for reason in calls)  # set_enabled
+    gui.assign_template_to_range([5], "001_cover.ai")  # no change -> no snapshot
+    assert len(calls) == 1
+
+    gui.use_default_template([5])
+    gui.set_enabled([5], False)
+    gui.clear_pages([1])
+    gui.copy_mapping([1])
+    gui.paste_mapping([3])
+    gui.auto_assign_templates()
+    gui.apply_preset("caur_kanālu")
+    kinds = [kind for _reason, kind in calls]
+    reasons = [reason for reason, _kind in calls]
+
+    # assign, use default, enable, clear, paste, auto assign, apply preset = 7 changes
+    assert len(calls) == 7
+    assert "preset" in kinds and "auto-map" in kinds
+    assert kinds.count("bulk-assign") >= 3
+    assert any("mapping ielīmēšana" in reason for reason in reasons)
+    assert any("lapas" in reason for reason in reasons)  # set_enabled
+    assert any("notīru pārrakstus" in reason for reason in reasons)  # clear override
 
 

@@ -24,6 +24,7 @@ snapshot, and `archive/original/` holds the predecessors.
   |  core/config.py          config.json read/validate/write                         |
   |  core/contract.py        the JSON contract (request/result), stats mapping       |
   |  core/validation.py      preflight checks                                        |
+  |  core/history.py         plan history: atomic config.json snapshots, undo, restore  |
   |  core/preflight.py       production preflight: READY / NOT READY for a whole JOB  |
   |  core/report.py          immutable job reports (JOB/LOG/reports, JSON + TXT)      |
   |  core/jsonio.py          atomic read/write, wait for a matching result           |
@@ -280,7 +281,8 @@ MAPPING tab: [thumbnails | large preview] + page info + page actions
 JOB/
   PDF/       input PDFs (recursive scan, bookkeeping folders skipped)
   TEMPLATE/  MASTER_AI_TEMPLATE.ai (default) + page templates 001_cover.ai, ...
-  CONFIG/    config.json, state.json, presets/<name>.json (mapping intent)
+  CONFIG/    config.json, state.json, presets/<name>.json (mapping intent),
+             history/<stamp>.json (plan snapshots, newest 100)
   AI_OUT/    results: manualis__003.ai
   LOG/       app.log (all sessions) + batch_<timestamp>.log (one per run)
   ERROR/     reserved (layout compatibility)
@@ -393,6 +395,37 @@ Illustrator version and the abort reason - built from `state.json` plus the pass
 exists is never reused (`-2`, `-3`, ...), both files are written atomically, and a
 failing report write is logged as a warning instead of turning a finished batch into a
 failure. `list_reports()` returns them newest first.
+
+## 7d. Plan history: snapshots, undo, restore (milestone 8)
+
+The plan is production data, so `pdf_ai_batch/core/history.py` keeps a history of it in
+`JOB/CONFIG/history/`:
+
+    2026-09-23_220720.json   before "template piešķire (6-35)"
+    2026-09-23_220724.json   the recovery copy of the UNDO
+    2026-09-23_220728.json   before "preset magazine_36_pages"
+    2026-09-23_220728-2.json before the apply of that preset
+
+Every file holds the exact plan plus metadata (`version`, `created`, `kind`, `reason`,
+`job`, `app_version`, `meta` with documents/pages/pinned/config version) and **nothing
+else**: no queue state, no attempts, no run ids, no error text, no outputs.
+
+| Operation | Rule |
+| --- | --- |
+| `snapshot()` | atomic write (temp + rename) of the plan that is about to be replaced; a failed write raises `HistoryError` and leaves nothing behind, and the caller (the GUI funnel) then refuses the mutation |
+| when | only in `AppController._before_mutation`, called by the single funnel `_mutate_config` - and only when the plan really differs from `config.json` (`_plan_is_on_disk`), so a no-op edit leaves no entry |
+| kinds | `bulk-assign`, `preset`, `auto-map`, `reconcile`, `undo`, `restore`, `plan` |
+| `list_snapshots()` | newest first by modification time; an unreadable file is listed but can never be restored |
+| `load_snapshot()` | validates the snapshot version and the plan (`config.validate_config`) before anything is written |
+| `undo_last()` | restores the newest snapshot whose plan differs from the current one; `None` when there is nothing to undo |
+| `restore_snapshot()` | snapshots the CURRENT plan first (the recovery copy), then writes the restored plan atomically - **a restore is reversible** |
+| retention | `DEFAULT_RETENTION` = 100 per JOB; `prune()` never deletes a `pinned: true` snapshot |
+
+The GUI does the same through the funnel: `[UNDO PLAN CHANGE]` and
+`[RESTORE SNAPSHOT]` (`gui/bulk_dialogs.py`) call `AppController.undo_plan_change()` /
+`restore_snapshot()`, which restore the plan through `_write_config` (validate ->
+atomic save -> queue rebuild), so `state.json`, the run history and the outputs are
+never touched by a plan restore.
 
 ## 8. Logging and errors
 

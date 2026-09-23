@@ -5,7 +5,63 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
-## [0.8.0] - 2026-09-23
+## [0.9.0] - 2026-09-23
+
+Milestone 8: **plan snapshots, undo and restore**. The plan of a JOB is production
+data, so every meaningful change now leaves an atomic snapshot of the plan it replaced
+in `JOB/CONFIG/history/`, and `[UNDO PLAN CHANGE]` / `[RESTORE SNAPSHOT]` can put an
+older plan back. A restore keeps the plan it replaces first, so it is reversible too.
+`jsx/*`, `cleanup.jsx` and the Python <-> JSX contract are untouched.
+
+### Added
+
+- `pdf_ai_batch/core/history.py` - the plan history of a JOB:
+  * `JOB/CONFIG/history/<YYYY-MM-DD_HHMMSS>.json`, one file per snapshot:
+    `version`, `created`, `kind`, `reason`, `job`, `app_version`, `meta`
+    (documents, pages, pinned, config version) and `config` (the exact plan). No queue
+    state, no attempts, no run ids, no errors - plan data only (unit tested)
+  * `snapshot()` writes atomically through `jsonio.write_json_atomic`; a failed write
+    raises `HistoryError` and leaves nothing behind
+  * `list_snapshots()` (newest first, an unreadable file is listed but never applied),
+    `load_snapshot()` (validates version + plan, so a corrupt copy can never be
+    restored), `count_snapshots()`, `latest_snapshot()`, `info_of()`/`summary()`
+  * `undo_target()` - the newest snapshot whose plan differs from the current one
+  * `restore_snapshot()` - snapshots the CURRENT plan first ("recovery copy"), then
+    writes the restored plan atomically: a restore is itself reversible
+  * `undo_last()` - one step back, `None` when there is nothing to undo
+  * `prune()` retention (`DEFAULT_RETENTION` 100 per JOB); a snapshot marked
+    `pinned: true` is never deleted (the hook for manually named snapshots)
+- `gui/mapping_tab.py` - `[UNDO PLAN CHANGE]` and `[RESTORE SNAPSHOT]` (with
+  `gui/bulk_dialogs.SnapshotDialog`: timestamp, reason, document and page count per
+  snapshot, plus the note that the current plan is kept first)
+- `gui/controller.py` - `snapshots()`, `snapshot_count()`, `undo_plan_change()`,
+  `restore_snapshot()`; `_before_mutation(reason, kind)` now writes the snapshot, so
+  the single funnel is the only place a plan change can happen (and the only place
+  history comes from). Kinds: `bulk-assign`, `preset`, `auto-map`, `reconcile`,
+  `undo`, `restore`, `plan`
+- Tests: `tests/test_history.py` (17) and `tests/test_gui_history.py` (13)
+- Tools: `temp/run_gui_acceptance_m8.py` (real GUI, evidence
+  `temp/gui_acceptance_m8.txt`, screenshots `temp/gui_m8_*.png`)
+
+### Changed
+
+- `gui/controller.py` - a mutation is only saved (and only snapshotted) when the plan
+  really differs from what `config.json` holds: a no-op edit now leaves no history
+  entry and does not touch the queue, while an explicit plan action still materialises
+  the plan for a JOB that has no `config.json` yet. `_plan_is_on_disk()` does that
+  comparison; the enable switch is recorded as a plain plan edit, not a bulk rule.
+- `core/__init__.py` - `history` documented and exported.
+- `VERSION` / `pdf_ai_batch/__init__.py` - 0.9.0.
+
+### Fixed
+
+- A snapshot of a no-op edit used to be written, which made `[UNDO PLAN CHANGE]` a
+  no-op too (the newest snapshot equalled the current plan). Now only real changes are
+  recorded, so an undo always has a step to take.
+- `history.list_snapshots()` orders by modification time (a second snapshot within the
+  same second gets a `-2` suffix and is newer), not by file name.
+
+
 
 Milestone 7: **production preflight + immutable job reports**. Before a long project
 one action now answers "can this run at all?" (`[PREFLIGHT PROJECT]`, `READY` /
