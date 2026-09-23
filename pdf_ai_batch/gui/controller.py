@@ -40,7 +40,7 @@ from typing import Callable, Iterable, Sequence
 from .. import paths
 from ..adapters.illustrator import IllustratorAdapter
 from ..core import config as cfg
-from ..core import mapping_rules, pagejob, state, validation
+from ..core import mapping_rules, pagejob, preflight, report, state, validation
 from ..core.pdf_info import PdfPageCountError, count_pages
 from ..core.project import JobProject, ProjectError
 from ..core.queue import BatchQueue, BatchSummary, QueueError
@@ -268,6 +268,8 @@ class AppController:
         self._preview_cache: PreviewCache | None = None
         #: COPY MAPPING -> PASTE MAPPING (plan data only, never queue state)
         self._mapping_clipboard: mapping_rules.MappingClipboard | None = None
+        #: the last [PREFLIGHT PROJECT] of this session (None = never run)
+        self._preflight: preflight.PreflightReport | None = None
 
     # ------------------------------------------------------------------ project
 
@@ -299,6 +301,7 @@ class AppController:
         self._active_pdf = None
         self._illustrator_state = None
         self._last_checks = []
+        self._preflight = None
         pdfs = project.find_pdfs()
         if pdfs:
             self._active_pdf = pdfs[0]
@@ -1151,6 +1154,63 @@ class AppController:
             return False
         checks = self._last_checks or self.validate()
         return not validation.has_failures(checks)
+
+    # --------------------------------------------------- production preflight (M7)
+
+    def preflight_project(self, *, check_illustrator: bool = True) -> preflight.PreflightReport:
+        """[PREFLIGHT PROJECT]: the whole project in one READY / NOT READY report.
+
+        This is the ONLY GUI action that may contact Illustrator outside a run: it
+        uses the same attach -> launch path as a run through the adapter, and only
+        when `check_illustrator` is set (the button asks; opening the GUI never does).
+        Everything else is the read-only `core/preflight.py`.
+        """
+        project = self._require_project()
+        adapter = None
+        if check_illustrator:
+            adapter = self.adapter
+            try:
+                if not adapter.attach():
+                    adapter.launch()
+            except Exception as exc:  # noqa: BLE001 - a broken COM is a finding, not a crash
+                self.log.warning("Illustrator nav sasniedzams pirms preflight: %s", exc)
+        result = preflight.run_preflight(project, adapter=adapter)
+        self._preflight = result
+        self.log.info(
+            "PREFLIGHT: %s | %s pārbaudes, kļūdas=%s, brīdinājumi=%s",
+            result.status,
+            sum(len(section.checks) for section in result.sections),
+            len(result.problems),
+            len(result.warnings),
+        )
+        return result
+
+    def preflight_report(self) -> preflight.PreflightReport | None:
+        """The last preflight of this session (None = never run)."""
+        return self._preflight
+
+    def preflight_text(self) -> str:
+        result = self._preflight
+        return result.to_text() if result is not None else ""
+
+    def preflight_blocks_run(self) -> list[str]:
+        """Hard errors of the last preflight (empty = nothing blocks a run)."""
+        result = self._preflight
+        if result is None:
+            return []
+        return list(result.problems)
+
+    def reports(self) -> list[Path]:
+        """The immutable reports of the active JOB (newest first)."""
+        project = self._require_project()
+        return report.list_reports(project)
+
+    def last_report_paths(self) -> report.ReportPaths | None:
+        """Where the report of the last pass went (None when none was written yet)."""
+        if self._queue is None:
+            return None
+        return self._queue.last_report_paths
+
 
     def validation_failures(self) -> list[str]:
         """Human readable problems, for the status bar and the run tab."""

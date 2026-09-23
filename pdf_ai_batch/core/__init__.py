@@ -16,6 +16,9 @@ Modules
                      transition helpers, RUNNING -> INTERRUPTED recovery
     queue            the persistent batch queue (build/run/continue/retry/skip/reset)
     validation       preflight checks before Illustrator is touched
+    preflight        production preflight: the whole project in one READY / NOT READY
+                     report (aggregates validation, does not duplicate it)
+    report           immutable job reports after every pass (JOB/LOG/reports)
 """
 
 from __future__ import annotations
@@ -33,4 +36,6 @@ __all__ = [
     "state",
     "queue",
     "validation",
+    "preflight",
+    "report",
 ]

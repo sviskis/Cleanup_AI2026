@@ -169,18 +169,31 @@ class MainWindow(tk.Tk):
         self.mapping_tab.refresh()
 
     def _on_task_done(self, payload: Any) -> None:
+        from ..core.preflight import PreflightReport
         from ..core.queue import BatchSummary
 
         if isinstance(payload, BatchSummary):
             self.run_tab.show_summary(payload)
+            self._log_report_paths()
             self.append_log("Darbs pabeigts")
             self.set_status(f"Pabeigts: {payload.format().splitlines()[0]}")
+            self.refresh_all()
+        elif isinstance(payload, PreflightReport):
+            self.run_tab.show_preflight(payload)
             self.refresh_all()
         elif isinstance(payload, tuple) and len(payload) == 2 and isinstance(payload[0], bool):
             self.run_tab.show_health(payload)
             self.refresh_all()
         elif payload is not None:
             self.append_log(str(payload))
+
+    def _log_report_paths(self) -> None:
+        """Show where the immutable report of the finished pass was written."""
+        paths = self.controller.last_report_paths()
+        if paths is None:
+            return
+        self.append_log(f"Report: {paths.txt}")
+        self.append_log(f"        {paths.json}")
 
     def _render_busy(self) -> None:
         busy = self.runner.busy

@@ -45,6 +45,7 @@ from pathlib import Path
 from . import __version__, paths
 from .adapters.illustrator import IllustratorAdapter
 from .core import jsonio
+from .core import preflight
 from .core import queue as queue_mod
 from .core.naming import pdf_id_for
 from .core.pagejob import PagePlanError
@@ -117,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="print what would run, call no Illustrator")
     parser.add_argument("--quiet", action="store_true", help="no console logging (log files only)")
     parser.add_argument("--json", dest="json_report", help="write the batch summary to this JSON file")
+    parser.add_argument(
+        "--preflight-project",
+        action="store_true",
+        help="production preflight for the whole project (READY / NOT READY); needs no other action",
+    )
+    parser.add_argument(
+        "--no-illustrator",
+        action="store_true",
+        help="with --preflight-project: do not contact Illustrator",
+    )
     return parser
 
 
@@ -126,6 +137,8 @@ def _actions(args: argparse.Namespace) -> list[str]:
         actions.append("skip")
     if args.reset:
         actions.append("reset")
+    if args.preflight_project:
+        actions.append("preflight_project")
     return actions
 
 
@@ -244,6 +257,29 @@ def main(argv: list[str] | None = None) -> int:
         print(batch.status_table())
         print("")
 
+    # -------------------------------------------------------- production preflight
+    if args.preflight_project:
+        adapter = None
+        if not args.no_illustrator and not args.skip_illustrator_check:
+            adapter = _make_adapter(args, logger)
+            try:
+                if not adapter.attach():
+                    adapter.launch()
+            except Exception as exc:  # noqa: BLE001 - a broken COM is a finding
+                print(f"Brīdinājums: Illustrator nav sasniedzams: {exc}")
+                logger.warning("Illustrator nav sasniedzams: %s", exc)
+        result = preflight.run_preflight(project, adapter=adapter)
+        print(result.to_text())
+        if result.can_run:
+            print("PREFLIGHT: READY")
+        else:
+            print("PREFLIGHT: NOT READY")
+            for problem in result.problems:
+                print(f"  - {problem}")
+        print("")
+        if not result.can_run:
+            exit_code = EXIT_USAGE
+
     # ------------------------------------------------------------- run actions
     run_actions = [
         name
@@ -313,6 +349,10 @@ def main(argv: list[str] | None = None) -> int:
         print("")
         print(batch.status_table())
         print("")
+        if batch.last_report_paths is not None:
+            print(f"Immutable report: {batch.last_report_paths.txt}")
+            print(f"                  {batch.last_report_paths.json}")
+            print("")
         if args.json_report:
             jsonio.write_json_atomic(Path(args.json_report), summary.as_dict())
             print(f"JSON atskaite: {args.json_report}")

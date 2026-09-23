@@ -5,7 +5,88 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
-## [0.7.0] - 2026-09-23
+## [0.8.0] - 2026-09-23
+
+Milestone 7: **production preflight + immutable job reports**. Before a long project
+one action now answers "can this run at all?" (`[PREFLIGHT PROJECT]`, `READY` /
+`NOT READY`), and every pass writes a structured report into `JOB/LOG/reports/`
+(JSON is canonical, TXT is human readable, nothing is ever overwritten). `jsx/*`,
+`cleanup.jsx` and the Python <-> JSX contract are untouched.
+
+### Added
+
+- `pdf_ai_batch/core/preflight.py` - one production readiness report for a whole JOB,
+  aggregated instead of duplicated:
+  * sections `PROJECT`, `PDF`, `TEMPLATES`, `OUTPUT`, `QUEUE`, `ILLUSTRATOR`, `SYSTEM`
+    with `OK` / `WARNING` / `ERROR` per check, and an overall `READY` / `NOT READY`
+  * `PROJECT`: JOB root + all six folders, `config.json` valid, `state.json` loadable,
+    CONFIG writable
+  * `PDF`: every configured document (present, page count readable, `CONFIG STALE`,
+    `MISSING PDF`, `PLAN ERROR`), PDFs in the folder, and how many documents are
+    really runnable
+  * `TEMPLATES`: files in `JOB/TEMPLATE`, every template **named in config.json**
+    (a missing one silently fell back to the default before), the default template
+    when pages need it, the per-page effective templates
+  * `OUTPUT`: AI_OUT writable, valid output names, duplicates per document **and**
+    across documents (config level, so an invalid config is never hidden by the auto
+    plan), outputs outside AI_OUT, existing outputs that would be `SKIP`
+  * `QUEUE`: state.json valid, unique `job_id`s, items outside the plan, stale
+    `RUNNING`, runnable count, the six state counts
+  * `ILLUSTRATOR`: `worker.jsx` / `cleanup.jsx` / `runtime/` (real package paths,
+    never "not specified") plus COM availability and version - contacted **only** for
+    this explicit action (`check_illustrator=True`)
+  * `SYSTEM`: free disk space (`FREE_SPACE_WARNING_MB` 500 / `FREE_SPACE_ERROR_MB`
+    100 thresholds), LOG writable, the report folder creatable
+  * `run_preflight()` is read-only: it plans the project to look at what a run would
+    do but never writes `config.json`, `state.json` or an output (unit tested)
+  * `PreflightReport` offers `status`, `can_run`, `problems`, `warnings`,
+    `summary_rows()` (the GUI/console layout), `to_text()` and `to_dict()`
+- `pdf_ai_batch/core/report.py` - immutable job reports:
+  * `JobReport` (job, root, label, started/finished/duration, counts of all six
+    states, documents, errors, interrupted, objects processed, retries, Illustrator
+    version, abort reason, session) with `to_text()` and `to_dict()`
+  * `build_report()` assembles it from `state.json` (or the given items) plus the pass
+    `BatchSummary` - cumulative counts AND what this pass did; no side effects
+  * `write_report()` writes `JOB/LOG/reports/report_<YYYYmmdd-HHMMSS>.json` and `.txt`
+    atomically; an existing name is never overwritten (a second report in the same
+    second gets `-2`), `list_reports()` returns them newest first, `read_report()` reads
+    one back
+  * a report **cannot break a finished pass**: a failed write is logged as a warning
+- `core/queue.py` - `finish_pass()` runs at the end of every pass (RUN ALL, RUN
+  CURRENT PDF, RUN SELECTED, CONTINUE, RETRY, and a pass that could not start), writes
+  the report, logs the paths and exposes `last_report` / `last_report_paths`;
+  retry passes are labelled (`RETRY ERRORS` / `RETRY INTERRUPTED`), and the pass label
+  now reaches the report
+- GUI `[PREFLIGHT PROJECT]` on the RUN tab: runs in a worker thread, renders the
+  summary block and the full report in the progress panel + log, and a **real ERROR**
+  blocks the next run (a warning never does). `AppController.preflight_project()`,
+  `preflight_report()`, `preflight_text()`, `preflight_blocks_run()`, `reports()` and
+  `last_report_paths()`; the RUN tab logs where each report went
+- CLI `python -m pdf_ai_batch.batch --preflight-project [--no-illustrator]` (exit code
+  1 and `PREFLIGHT: NOT READY` when it is not ready), and the batch CLI prints the
+  report paths of the finished pass
+- Tests: `tests/test_preflight.py` (25) and `tests/test_report.py` (16)
+- Tools: `temp/run_gui_acceptance_m7.py` (real GUI + Illustrator, evidence
+  `temp/gui_acceptance_m7.txt`, screenshots `temp/gui_m7_*.png`)
+
+### Changed
+
+- `core/validation.py` - `CheckResult.severity` (`OK` / `WARNING` / `ERROR`) and the
+  severity constants, so preflight and the per-page checks speak one language.
+- `core/__init__.py` - `preflight` and `report` documented and exported.
+- `VERSION` / `pdf_ai_batch/__init__.py` - 0.8.0.
+
+### Fixed
+
+- `preflight` counts a document with `CONFIG STALE` or `PLAN ERROR` as **not runnable**
+  (the queue excludes it), so a single-document JOB with a drifted page count is
+  `NOT READY` instead of `READY`.
+- `preflight` reports a template that `config.json` names but the folder does not have
+  (a real `ERROR`: the page would silently use the default template).
+- `preflight` reports output duplicates from `config.json` itself; an invalid config
+  makes the plan fall back to the automatic plan, which would otherwise hide them.
+
+
 
 Milestone 6: **bulk page mapping + reusable mapping presets**. A 100-300 page plan is
 no longer a page by page job: ranges, numbered auto mapping, a mapping clipboard that

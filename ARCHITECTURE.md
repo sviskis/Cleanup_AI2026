@@ -24,6 +24,8 @@ snapshot, and `archive/original/` holds the predecessors.
   |  core/config.py          config.json read/validate/write                         |
   |  core/contract.py        the JSON contract (request/result), stats mapping       |
   |  core/validation.py      preflight checks                                        |
+  |  core/preflight.py       production preflight: READY / NOT READY for a whole JOB  |
+  |  core/report.py          immutable job reports (JOB/LOG/reports, JSON + TXT)      |
   |  core/jsonio.py          atomic read/write, wait for a matching result           |
   |  core/mapping_rules.py   bulk mapping: ranges, numbered auto map, clipboard,      |
   |                          presets (the ONLY place that decides mapping)           |
@@ -353,6 +355,44 @@ Every plan change goes through `AppController._mutate_config`:
 `cfg.save_config` is called from exactly one place in the GUI layer, so the GUI can
 never write `config.json` on its own.
 
+
+## 7c. Production preflight and job reports (milestone 7)
+
+**Preflight.** `core/preflight.run_preflight(project, adapter=..., check_illustrator=...)`
+answers "can this project run now?" in one report. It aggregates the checks that
+already exist (`core/validation.py`, `config.validate_config`, the project plan, the
+state model) and adds the project wide ones; it does not duplicate them and it is
+read-only (no `config.json`, `state.json` or output is written).
+
+| Section | Checks |
+| --- | --- |
+| PROJECT | JOB root and all six folders, `config.json` valid, `state.json` loadable, CONFIG writable |
+| PDF | every configured document (missing, `CONFIG STALE`, `PLAN ERROR`, page count), PDFs in the folder, how many documents are really runnable |
+| TEMPLATES | templates on disk, **every template named in `config.json`** (a missing one would silently fall back to the default), the default template when pages need it, the effective per page templates |
+| OUTPUT | AI_OUT writable, valid output names, duplicates per document and across documents (read from the config, so an invalid config cannot hide behind the automatic plan), outputs outside AI_OUT, existing outputs that would be `SKIP` |
+| QUEUE | `state.json` valid, unique `job_id`s, items outside the plan, stale `RUNNING`, runnable count, the six state counts |
+| ILLUSTRATOR | `worker.jsx`, `cleanup.jsx`, `runtime/` (the real package paths) and COM availability + version |
+| SYSTEM | free disk space (`FREE_SPACE_WARNING_MB` 500 / `FREE_SPACE_ERROR_MB` 100), LOG writable, report folder creatable |
+
+Severity is `OK` / `WARNING` / `ERROR` per check and `READY` / `NOT READY` for the
+project. **Only a real `ERROR` blocks a run**: a missing or stale document next to a
+healthy one is a warning (RUN ALL skips it), while the same finding as the only
+document is an error. Illustrator is contacted only when the explicit action asks for
+it (`check_illustrator=True`, one of the two GUI paths that may touch COM).
+
+**Reports.** After every pass the queue calls `report.write_report`, which writes two
+immutable files into `JOB/LOG/reports/`:
+
+    report_<YYYYmmdd-HHMMSS>.json    canonical, structured
+    report_<YYYYmmdd-HHMMSS>.txt     the same content, human readable
+
+`JobReport` carries counts of all six states, per document rows, the `ERROR` and
+`INTERRUPTED` entries (type, message, attempts), objects processed, retries, duration,
+Illustrator version and the abort reason - built from `state.json` plus the pass
+`BatchSummary`, so the JSON always matches what the queue shows. A name that already
+exists is never reused (`-2`, `-3`, ...), both files are written atomically, and a
+failing report write is logged as a warning instead of turning a finished batch into a
+failure. `list_reports()` returns them newest first.
 
 ## 8. Logging and errors
 

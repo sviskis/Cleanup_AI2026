@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from . import pagejob, state
+from . import pagejob, report as report_module, state
 from .contract import (
     STATUS_OK,
     STATUS_SKIP,
@@ -290,6 +290,9 @@ class BatchQueue:
             job_root=project.root,
             session_id=session_id or new_run_id(),
         )
+        #: the immutable report of the last finished pass (JSON + TXT in JOB/LOG/reports)
+        self.last_report: report_module.JobReport | None = None
+        self.last_report_paths: report_module.ReportPaths | None = None
 
     # ------------------------------------------------------------------- opening
 
@@ -479,6 +482,54 @@ class BatchQueue:
             documents=self.document_progress(),
         )
 
+    def finish_pass(self, summary: BatchSummary, label: str) -> BatchSummary:
+        """Write the immutable report of a finished pass and remember it.
+
+        Called at the end of every pass (RUN ALL, RUN CURRENT PDF, RUN SELECTED,
+        CONTINUE, RETRY, and a pass that could not even start). A report is a
+        by-product: if the write fails, the pass result stands and the reason is
+        logged - a finished batch is never turned into a failure by reporting.
+        """
+        from .. import __version__
+
+        try:
+            job_report = report_module.build_report(
+                self.project,
+                items=list(self.document.items),
+                summary=summary,
+                label=label,
+                illustrator_version=self._illustrator_version(),
+                app_version=__version__,
+            )
+            paths = report_module.write_report(self.project, job_report)
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            self.log.warning("Report netika uzrakstīts: %s", exc)
+            return summary
+        self.last_report = job_report
+        self.last_report_paths = paths
+        self.log.info(
+            "Report %s: DONE=%s ERROR=%s INTERRUPTED=%s | %s",
+            paths.json.name,
+            job_report.count_of(state.DONE),
+            job_report.count_of(state.ERROR),
+            job_report.count_of(state.INTERRUPTED),
+            paths.txt,
+        )
+        return summary
+
+    def _illustrator_version(self) -> str:
+        """Illustrator version of the adapter, when it can tell us (best effort)."""
+        getter = getattr(self.adapter, "app_info", None)
+        if getter is None:
+            return ""
+        try:
+            info = getter()
+        except Exception:  # noqa: BLE001 - a report must never fail on this
+            return ""
+        if isinstance(info, dict):
+            return str(info.get("version") or "")
+        return str(getattr(info, "version", "") or "")
+
     # -------------------------------------------------------------------- build
 
     def build_queue(
@@ -649,10 +700,13 @@ class BatchQueue:
                 summary = self.summary(recovered=recovered)
                 summary.aborted = True
                 summary.stop_reason = str(exc)
-                return summary
+                return self.finish_pass(summary, "RUN ALL ENABLED")
         goals = state.RUNNABLE_STATES
         return self._run_selection(
-            self._selection(goals), progress=progress, recovered=recovered
+            self._selection(goals),
+            progress=progress,
+            recovered=recovered,
+            label="RUN ALL ENABLED",
         )
 
     def run_documents(
@@ -679,11 +733,12 @@ class BatchQueue:
                 summary = self.summary(recovered=recovered)
                 summary.aborted = True
                 summary.stop_reason = str(exc)
-                return summary
+                return self.finish_pass(summary, "RUN CURRENT PDF")
         return self._run_selection(
             self._selection(state.RUNNABLE_STATES, limit=limit, pdfs=pdfs),
             progress=progress,
             recovered=recovered,
+            label="RUN CURRENT PDF",
         )
 
     def continue_queue(
@@ -709,20 +764,28 @@ class BatchQueue:
                 summary = self.summary(recovered=recovered)
                 summary.aborted = True
                 summary.stop_reason = str(exc)
-                return summary
+                return self.finish_pass(summary, "CONTINUE")
         return self._run_selection(
             self._selection(state.RUNNABLE_STATES, limit=limit),
             progress=progress,
             recovered=recovered,
+            label="CONTINUE",
         )
 
     def retry_errors(self, *, run: bool = False, progress: ProgressCallback | None = None) -> RetryResult:
         """ERROR -> WAITING. With run=True the retried items are executed at once."""
-        return self._requeue(state.RETRY_ERROR_STATES, run=run, progress=progress)
+        return self._requeue(
+            state.RETRY_ERROR_STATES, run=run, progress=progress, label="RETRY ERRORS"
+        )
 
     def retry_interrupted(self, *, run: bool = False, progress: ProgressCallback | None = None) -> RetryResult:
         """INTERRUPTED -> WAITING (used after a crash or a manual stop)."""
-        return self._requeue(state.RETRY_INTERRUPTED_STATES, run=run, progress=progress)
+        return self._requeue(
+            state.RETRY_INTERRUPTED_STATES,
+            run=run,
+            progress=progress,
+            label="RETRY INTERRUPTED",
+        )
 
     def run_items(
         self,
@@ -742,7 +805,7 @@ class BatchQueue:
         selection = [item for item in self._selection(state.RUNNABLE_STATES) if item.job_id in wanted]
         if limit:
             selection = selection[:limit]
-        return self._run_selection(selection, progress=progress)
+        return self._run_selection(selection, progress=progress, label="RUN SELECTED")
 
     def reload(self, *, recover: bool = False) -> list[str]:
         """Re-read state.json from disk (another process may have written it).
@@ -875,6 +938,7 @@ class BatchQueue:
         *,
         run: bool = False,
         progress: ProgressCallback | None = None,
+        label: str = "RETRY",
     ) -> RetryResult:
         wanted = set(states)
         touched: list[str] = []
@@ -893,6 +957,7 @@ class BatchQueue:
             result.summary = self._run_selection(
                 [item for item in selection if item is not None and item.runnable],
                 progress=progress,
+                label=label,
             )
         return result
 
@@ -902,19 +967,22 @@ class BatchQueue:
         *,
         progress: ProgressCallback | None = None,
         recovered: Sequence[str] = (),
+        label: str = "RUN",
     ) -> BatchSummary:
         """Run a selection of items; one bad page never stops the rest."""
         started = state.now_stamp()
         selection = [item for item in items if item.runnable]
         if not selection:
             self.log.info("Nav izpildāmu elementu")
-            return self.summary(recovered=recovered, started=started)
+            return self.finish_pass(
+                self.summary(recovered=recovered, started=started), label
+            )
 
         collisions, collision_summary = self._duplicate_guard(selection)
         if collision_summary is not None:
             collision_summary.recovered = list(recovered)
             collision_summary.started = started
-            return collision_summary
+            return self.finish_pass(collision_summary, label)
 
         self.close_leftovers()
         outcomes: list[RunOutcome] = []
@@ -933,12 +1001,15 @@ class BatchQueue:
                 self.log.error("Pārtraucu piegājienu: %s", stop_reason)
                 break
 
-        return self.summary(
-            outcomes=outcomes,
-            recovered=recovered,
-            started=started,
-            aborted=aborted,
-            stop_reason=stop_reason,
+        return self.finish_pass(
+            self.summary(
+                outcomes=outcomes,
+                recovered=recovered,
+                started=started,
+                aborted=aborted,
+                stop_reason=stop_reason,
+            ),
+            label,
         )
 
     def close_leftovers(self) -> int:

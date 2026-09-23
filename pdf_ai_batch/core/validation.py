@@ -24,6 +24,11 @@ OK = "[OK]  "
 FAIL = "[FAIL]"
 WARN = "[!]   "
 
+#: severity vocabulary of the production preflight (milestone 7) - one source of truth
+SEVERITY_OK = "OK"
+SEVERITY_WARNING = "WARNING"
+SEVERITY_ERROR = "ERROR"
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -35,6 +40,13 @@ class CheckResult:
     def format(self, width: int = 34) -> str:
         tag = WARN if (self.warning and not self.ok) else (OK if self.ok else FAIL)
         return f"{tag} {self.name.ljust(width)} {self.detail}".rstrip()
+
+    @property
+    def severity(self) -> str:
+        """OK / WARNING / ERROR - what the preflight report groups by."""
+        if self.ok:
+            return SEVERITY_OK
+        return SEVERITY_WARNING if self.warning else SEVERITY_ERROR
 
 
 def is_writable(folder: Path) -> bool:

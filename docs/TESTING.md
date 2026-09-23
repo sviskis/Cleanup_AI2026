@@ -235,6 +235,41 @@ baseline (`dac46e8`) as well. Always judge the suite with the project gate
 (`.venv\Scripts\python.exe -m pytest`), which passes; the acceptance driver keeps its
 dialog objects alive for the same reason.
 
+## 0g. Production preflight (milestone 7)
+
+```powershell
+# the whole project in one report, Illustrator included (exit 1 when NOT READY)
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\PREFLIGHT_JOB --preflight-project
+
+# without touching Illustrator (files, plan, queue, disk only)
+.venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\PREFLIGHT_JOB --preflight-project --no-illustrator
+```
+
+| Test file | What it proves |
+| --- | --- |
+| `tests/test_preflight.py` (25) | a clean project is `READY` with all seven sections `OK`; the check writes nothing (`config.json`, `state.json`, AI_OUT byte identical); Illustrator is contacted **only** with `check_illustrator=True`; an unavailable or broken COM is an `ERROR`; a missing document is a warning while another document can run and an `ERROR` as the only document; `CONFIG STALE` (warning next to a healthy document, `ERROR` alone, with the RECONCILE hint); a template named in `config.json` but missing on disk is an `ERROR` (and the `Missing templates` fact counts it); a missing default template while a page inherits it is an `ERROR`; an empty template folder is an `ERROR`; an unwritable AI_OUT, duplicate outputs inside one document and across documents are `ERROR`s; an existing output for a runnable page is a `SKIP` warning; a stale `RUNNING` item and an item outside the plan are warnings; a corrupt `state.json` is a warning and still allows a run; the disk thresholds (warning / error / unreadable drive); `to_text()` and `to_dict()` agree |
+
+Real acceptance: `temp/run_gui_acceptance_m7.py` (13 steps, real GUI + Illustrator,
+evidence `temp/gui_acceptance_m7.txt`) - `[PREFLIGHT PROJECT]` -> `Overall READY`
+(Illustrator READY 29.8.3), remove `001_cover.ai` -> `NOT READY`
+(`[TEMPLATES] Konfigurētie template: trūkst: 001_cover.ai`) and RUN blocked, restore ->
+`READY`.
+
+## 0h. Job reports (milestone 7)
+
+Every pass of the queue writes `JOB/LOG/reports/report_<YYYYmmdd-HHMMSS>.json` and
+`.txt` (immutable; a second report in the same second gets `-2`). `BatchQueue` exposes
+`last_report` / `last_report_paths`, the CLI prints the paths, and the GUI logs them.
+
+| Test file | What it proves |
+| --- | --- |
+| `tests/test_report.py` (16) | duration formatting (`21m 42s`); counts match `state.json` for all six states; objects processed and retries counted; `ERROR`/`INTERRUPTED` rows carry type, message and attempts; a report can be built from disk without a pass summary; JSON + TXT land in `JOB/LOG/reports` and agree line by line; reports are immutable (`report_<stamp>-2.json` appears next to the first, which stays byte identical); writing touches neither `config.json` nor `state.json`; UTF-8 Latvian job/document names without mojibake; a broken report file is handled; every pass writes one (RUN ALL, RUN SELECTED, an empty pass); an aborted pass names its reason; report counts stay in sync after a retry; a failing report write never breaks a finished pass |
+
+Real acceptance (same script): a locked output -> one `ERROR` page, `report ...txt`
+with `DONE=8 ERROR=1` and the error row; `RETRY PROJECT ERRORS` -> `report ...txt` with
+`DONE=9`, `ERROR=0`, `retries=1`; the report counts equal `state.json`
+(`WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED`); both reports still on disk.
+
 ## 1. Automated checks
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1

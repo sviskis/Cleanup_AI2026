@@ -48,6 +48,13 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
       conflict preview, and one mutation funnel for every plan change. All rules live
       in `pdf_ai_batch/core/mapping_rules.py`; the GUI only collects input
       (`gui/bulk_dialogs.py`). See `docs/GUI.md` §Bulk mapping.
+- [x] Production preflight + immutable job reports (milestone 7):
+      `[PREFLIGHT PROJECT]` returns one READY / NOT READY report
+      (`core/preflight.py`, sections PROJECT / PDF / TEMPLATES / OUTPUT / QUEUE /
+      ILLUSTRATOR / SYSTEM, `OK` / `WARNING` / `ERROR`, RUN blocked only by a real
+      ERROR), and every pass writes `JOB/LOG/reports/report_<stamp>.json` + `.txt`
+      (`core/report.py`, `BatchQueue.finish_pass`, never overwritten). The CLI has
+      `--preflight-project`. See `docs/TESTING.md` §0g and §0h.
       Done: `pdf_ai_batch/preview/` (PyMuPDF renderer + disposable
       `JOB/.cache/preview` keyed on pdf + mtime + size + page + render size),
       `gui/preview_loader.py` (one worker thread, priority queue, generations, event

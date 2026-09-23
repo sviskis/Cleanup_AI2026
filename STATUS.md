@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.7.0
+Version: 0.8.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 6 done - the MAPPING tab maps 100-300 page projects in bulk (ASSIGN TO RANGE, numbered auto mapping, COPY/PASTE MAPPING across documents, USE DEFAULT, CLEAR OVERRIDE, SAVE/APPLY PRESET with a conflict preview); every mapping rule lives in `core/mapping_rules.py`, every plan change goes through one mutation funnel, and a real 16 step acceptance run (36 page PDF, 5 pages processed in Illustrator, each output proven against its template) passed**
+Status: **Milestone 7 done - `[PREFLIGHT PROJECT]` answers "can this project run now?" with one READY / NOT READY report (PROJECT / PDF / TEMPLATES / OUTPUT / QUEUE / ILLUSTRATOR / SYSTEM, OK / WARNING / ERROR, RUN blocked only by a real ERROR), and every pass writes an immutable report into `JOB/LOG/reports/` (JSON canonical + TXT human readable, never overwritten); a real 13 step acceptance run (2 PDFs, 9 pages, a locked output as ERROR, retry, count comparison against state.json) passed**
 
 ## Working
 
@@ -168,6 +168,36 @@ Status: **Milestone 6 done - the MAPPING tab maps 100-300 page projects in bulk 
 * Details and the real evidence: `docs/GUI.md` §Bulk mapping and
   `temp/gui_acceptance_m6.txt`.
 
+### Production preflight + job reports (milestone 7)
+
+* `core/preflight.py` - `run_preflight(project, adapter=..., check_illustrator=...)`
+  returns one `PreflightReport` with sections `PROJECT`, `PDF`, `TEMPLATES`, `OUTPUT`,
+  `QUEUE`, `ILLUSTRATOR`, `SYSTEM`; every check carries `OK` / `WARNING` / `ERROR`, the
+  report carries `READY` / `NOT READY`, `problems`, `warnings`, `facts`,
+  `summary_rows()` (the compact layout), `to_text()` and `to_dict()`.
+  * It **aggregates** `core/validation.py`, `config.validate_config`, the project plan
+    and the state model instead of duplicating them.
+  * `RUN` is blocked by a real `ERROR` only (`can_run`), never by a warning: a missing
+    PDF or a stale page count is a warning while another document can still run, and an
+    ERROR when nothing is left to run.
+  * Illustrator is contacted **only** for this explicit action, through the same
+    adapter as a run - opening the GUI still never touches COM.
+  * The check is read-only (unit tested: config.json, state.json and AI_OUT unchanged).
+* `core/report.py` - immutable reports of every pass:
+  `JOB/LOG/reports/report_<YYYYmmdd-HHMMSS>.json` (canonical) + `.txt` (readable),
+  written atomically and never overwritten (`-2` suffix on a collision). `JobReport`
+  holds counts of all six states, per-document rows, the ERROR/INTERRUPTED entries with
+  type/message/attempts, objects processed, retries, duration, Illustrator version and
+  the abort reason. `build_report()` reads the queue state, `list_reports()` /
+  `read_report()` read them back.
+* `core/queue.py` - `finish_pass()` ends every pass with a report (RUN ALL ENABLED,
+  RUN CURRENT PDF, RUN SELECTED, CONTINUE, RETRY ERRORS, RETRY INTERRUPTED, and a pass
+  that could not even start); a failed report write is a warning, never a failed batch.
+* GUI `[PREFLIGHT PROJECT]` (RUN tab) + the summary block in the progress panel;
+  CLI `batch.py --preflight-project [--no-illustrator]`.
+* Details and the real evidence: `docs/GUI.md` §Production preflight, `docs/TESTING.md`
+  §0g and `temp/gui_acceptance_m7.txt`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -197,6 +227,9 @@ Status: **Milestone 6 done - the MAPPING tab maps 100-300 page projects in bulk 
 | Bulk mapping, real GUI + Illustrator, 36 page JOB (`temp/run_gui_acceptance_m6.py`, `temp/gui_acceptance_m6.txt`) | PASS, 16 steps: range dialog rejects `0` and `99` with the core messages; ASSIGN 1 / 2-5 / 6-20 (USE DEFAULT) / 21 land in `config.json`; COPY 2-5 -> PASTE 22-25; SAVE PRESET -> 6 range rules (`1`, `2-5`, `6-20`, `21`, `22-25`, `26-36`); AUTO MAP BY NUMBER picks 1/2/21 and never MASTER; reset all pages -> preset preview ("Mainīsies 10 lapas", "Konfliktu nav") -> reapply restores the plan byte for byte; VALIDATE 30 checks / 0 errors; 5 real pages processed (DONE) and every output proven by its template: page 1 `COVER-TEMPLATE` 520x720, page 2 `INTRO-TEMPLATE` 460x620, page 6 MASTER 411x397, page 21 `SEP-TEMPLATE` 460x520, page 22 (pasted range) `INTRO-TEMPLATE` 460x620; MASTER SHA256 unchanged; Illustrator documents 0 |
 | Mapping rules (unit) | 48 tests: range syntax and its rejections, bulk assignment/enable/layer, numbered mapping (natural sort, MASTER excluded, ambiguity reported, unnumbered/out-of-range), copy/paste (cross PDF, page-count mismatch, offsets, enabled opt-in, no runtime fields), presets (schema, round trip, conflicts, replace_all, UTF-8 names) |
 | Mapping through the GUI controller | 17 tests: every MAPPING action through `AppController` into `config.json` + queue, run history survives a bulk edit, cross-document paste, preset preview/apply, mutation-funnel counter (8 mutations -> 8 hook calls) and a guard that the controller owns no mapping rule |
+| Production preflight + reports, real GUI + Illustrator, 2 PDFs / 9 pages (`temp/run_gui_acceptance_m7.py`, `temp/gui_acceptance_m7.txt`) | PASS, 13 steps: `[PREFLIGHT PROJECT]` on the real GUI -> `Overall READY` (PDF OK, Pages 9, Templates OK, Missing templates 0, Duplicate outputs 0, Output writable YES, Illustrator READY 29.8.3, Disk space OK (97 GB), Queue READY); template `001_cover.ai` removed -> `NOT READY` with `[TEMPLATES] Konfigurētie template: trūkst: 001_cover.ai` and RUN blocked; restored -> `READY`; real run of 9 pages with a locked output + overwrite -> exactly one `ERROR` (magazine l.2); the pass wrote `report_20260923-214637.txt/.json` (`RUN ALL ENABLED`, DONE=8 ERROR=1, error row for page 2); RETRY ERRORS -> 9 DONE with `report_20260923-214644.txt/.json` (`RETRY ERRORS`, ERROR=0, `retries=1`); report counts `WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED` == state.json (0/0/9/0/0/0); both reports still on disk (immutable); 9 outputs; MASTER SHA256 unchanged; Illustrator documents 0 |
+| Preflight (unit) | 25 tests: clean project READY with all seven sections OK; read-only (config/state/AI_OUT untouched); Illustrator contacted only when asked; unavailable/broken COM is an ERROR; missing PDF (warning with another document, ERROR as the only one); CONFIG STALE (warning next to a healthy document, ERROR alone, RECONCILE hint); template named in config but missing (ERROR); missing default template (ERROR); empty template folder (ERROR); unwritable AI_OUT (ERROR); duplicate outputs inside a document and across documents (ERROR); existing output -> SKIP warning; stale RUNNING / item outside the plan (warnings); corrupt state.json (warning, still READY); disk thresholds (warning / error / unreadable drive); TXT and JSON agree |
+| Job reports (unit) | 16 tests: duration formatting; counts match state.json; objects processed and retries; ERROR/INTERRUPTED rows with type, message and attempts; report from disk without a summary; JSON + TXT written into `JOB/LOG/reports`; TXT/JSON consistency for every state; immutable (`report_<stamp>-2.json` beside the first, first untouched); writing touches neither config nor state; UTF-8 Latvian job/document names without mojibake; broken report file handled; a report per pass (RUN ALL / RUN SELECTED / empty pass); an aborted pass names the reason; report counts stay in sync after a retry; a failed report write never breaks a pass |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
 ## Partially working / not yet verified
@@ -238,10 +271,9 @@ Status: **Milestone 6 done - the MAPPING tab maps 100-300 page projects in bulk 
 
 ## Next milestone
 
-1. Milestone 7 - production preflight (`core/preflight.py`, `[PREFLIGHT PROJECT]`)
-   and immutable job reports (`core/report.py` -> `JOB/LOG/reports/`).
-2. Milestone 8 - plan snapshots + undo (`JOB/CONFIG/history/`, `[UNDO PLAN CHANGE]`,
+1. Milestone 8 - plan snapshots + undo (`JOB/CONFIG/history/`, `[UNDO PLAN CHANGE]`,
    `[RESTORE SNAPSHOT]`); the hook already exists (`AppController._before_mutation`).
+2. Milestone 9 - Windows packaging (`Cleanup AI 2026.exe`, `tools/build_release.ps1`).
 3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
    real `.ait` template run (`template_mode = "saveas"`).
 4. "Stop after the current page" for the batch loop (now: close the window and
@@ -250,5 +282,5 @@ Status: **Milestone 6 done - the MAPPING tab maps 100-300 page projects in bulk 
 6. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
 7. Optional: a thumbnail size preference, "CLEAR PREVIEW CACHE" in the GUI, a preview
    of the assigned template next to the page preview, per document RECONCILE report and
-   "RECONCILE ALL".
+   "RECONCILE ALL", a report browser inside the GUI.
 

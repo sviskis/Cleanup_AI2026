@@ -185,6 +185,76 @@ Layout note: the mapping table keeps the selection as the single source of truth
 thumbnail click, a range action and the preview buttons all act on the same rows. While
 a batch runs, all bulk buttons are disabled (`set_busy`).
 
+## Production preflight (milestone 7)
+
+`[PREFLIGHT PROJECT]` on the RUN tab is one action that answers "can this project run
+now?". It runs in a worker thread (it may talk to Illustrator for a few seconds), puts
+the compact block into the Progress panel and the full report into the log:
+
+```
+PDF                    OK
+Pages                  9
+Templates              OK
+Missing templates      0
+Duplicate outputs      0
+Output writable        YES
+Illustrator            READY 29.8.3
+Disk space             OK (97 GB)
+Queue                  READY (9 lapas)
+
+Overall                READY
+```
+
+* Severity per check: `OK` / `WARNING` / `ERROR`; the project is `READY` or
+  `NOT READY`.
+* **RUN is blocked only by a real ERROR.** A warning never stops a run; when a previous
+  preflight found errors, starting a run explains them instead of failing silently.
+* It is the second (and last) GUI action that may contact Illustrator - explicit only,
+  never on startup. The status bar shows `PREFLIGHT: READY` / `NOT READY` plus the
+  counts, and every problem line is written to the log.
+
+## Job reports (milestone 7)
+
+Every pass writes an immutable report into `JOB/LOG/reports/`:
+
+```
+report_20260923-214644.json    canonical, structured
+report_20260923-214644.txt     human readable
+```
+
+The RUN tab logs both paths after a pass (`Report: ...`), and the same files are
+written by the CLI passes and by CONTINUE / RETRY. Nothing is ever overwritten: a
+second report within the same second gets `-2`. The TXT looks like:
+
+```
+JOB REPORT
+
+Job: PREFLIGHT_JOB
+Project: C:/.../PREFLIGHT_JOB
+Run: RUN ALL ENABLED
+Started: 2026-09-23 21:46:15
+Finished: 2026-09-23 21:46:37
+Duration: 22.4s
+
+PDFs:       2
+Pages:      9
+
+WAITING:     0
+RUNNING:     0
+DONE:        8
+ERROR:       1
+SKIPPED:     0
+INTERRUPTED: 0
+
+Objects processed: 21
+Retries: 0
+Illustrator version: 29.8.3
+This pass: OK=8 SKIPPED=0 ERROR=1 objects=21
+
+ERRORS:
+  magazine.pdf page 02 | OUTPUT_LOCKED | output fails ir aizņemts ...
+```
+
 ## Overwrite
 
 `RESET SELECTED` sets a page back to `WAITING`, but an existing `AI_OUT/...ai` would

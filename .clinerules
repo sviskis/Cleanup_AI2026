@@ -5,6 +5,14 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
 
 ## Hard rules
 
+- **One preflight, one report writer.** `pdf_ai_batch/core/preflight.py` is the only
+  project wide readiness check (it aggregates `validation.py`, `config.validate_config`,
+  the project plan and the state model - never duplicate a check) and
+  `pdf_ai_batch/core/report.py` is the only writer of `JOB/LOG/reports/`. Reports are
+  immutable (never overwrite one), a failed report write is a warning and never a failed
+  batch, and preflight contacts Illustrator only when the explicit action asks for it.
+  GUI: the RUN tab reports the preflight result and blocks a run only on a real ERROR;
+  `core/queue.py` writes the report of every pass through `finish_pass`.
 - **One mapping engine.** Bulk mapping rules live in `pdf_ai_batch/core/mapping_rules.py`
   and nowhere else: range parsing (`parse_pages`), numbered auto mapping
   (`auto_map_by_number`, deterministic, MASTER excluded, ambiguity reported never

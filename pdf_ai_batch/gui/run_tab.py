@@ -50,6 +50,7 @@ class RunTab(ttk.Frame):
             ("RETRY INTERRUPTED", self.on_retry_interrupted),
             ("REFRESH STATUS", self.on_refresh),
             ("HEALTH CHECK", self.on_health),
+            ("PREFLIGHT PROJECT", self.on_preflight),
         )
         for index, (label, handler) in enumerate(specs):
             button = ttk.Button(actions, text=label, command=handler)
@@ -82,6 +83,14 @@ class RunTab(ttk.Frame):
         self.documents.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 8))
         self.busy_label = ttk.Label(progress, text="", foreground="#0b5cad")
         self.busy_label.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 8))
+
+        self.preflight = ttk.Label(
+            progress,
+            text="PREFLIGHT PROJECT: nav pārbaudīts",
+            justify="left",
+            foreground="#444",
+        )
+        self.preflight.grid(row=6, column=0, sticky="w", padx=10, pady=(0, 8))
 
         log_frame = ttk.LabelFrame(self, text="Log (skats; kanoniskie logi ir JOB/LOG)")
         log_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -125,6 +134,17 @@ class RunTab(ttk.Frame):
                 parent=self,
             )
             self.ctx.report(" | ".join(failures[:3]), error=True)
+            return
+        # a finished PREFLIGHT PROJECT blocks a run only on a real ERROR (never a warning)
+        blockers = self.ctx.controller.preflight_blocks_run()
+        if blockers:
+            messagebox.showerror(
+                "PREFLIGHT PROJECT",
+                "Darbs netiek sākts, jo PREFLIGHT PROJECT atrada kļūdas:\n\n"
+                + "\n".join(blockers[:6]),
+                parent=self,
+            )
+            self.ctx.report("PREFLIGHT: " + " | ".join(blockers[:3]), error=True)
             return
         if not self.ctx.run_task(label, task):
             self.ctx.report("Notiek cits darbs, nogaidi.", error=True)
@@ -192,8 +212,37 @@ class RunTab(ttk.Frame):
         )
 
     def on_health(self) -> None:
-        """Explicit health check - the only other place that may touch COM."""
+        """Explicit health check - one of the two places that may touch COM."""
         self._start_health()
+
+    def on_preflight(self) -> None:
+        """PREFLIGHT PROJECT: the whole project in one READY / NOT READY report.
+
+        Runs in a worker thread (it may talk to Illustrator for a few seconds), so the
+        window stays responsive and the widgets are only touched in the event pump.
+        """
+        if not self.ctx.run_task(
+            "PREFLIGHT PROJECT",
+            lambda progress: self.ctx.controller.preflight_project(check_illustrator=True),
+        ):
+            self.ctx.report("Notiek cits darbs, nogaidi.", error=True)
+
+    def show_preflight(self, result) -> None:
+        """Render the preflight report (called by the window after the task)."""
+        if result is None:
+            return
+        self.append_log("".join(line + "\n" for line in result.to_text().splitlines()))
+        rows = [f"{label + ':':<20} {value}" for label, value in result.summary_rows() if label]
+        self.preflight.configure(text="\n".join(rows))
+        self.ctx.report(
+            f"PREFLIGHT: {result.status}"
+            + (f" | kļūdas: {len(result.problems)}" if result.problems else "")
+            + (f" | brīdinājumi: {len(result.warnings)}" if result.warnings else ""),
+            error=not result.can_run,
+        )
+        if result.problems:
+            for problem in result.problems[:4]:
+                self.append_log("KĻŪDA: " + problem)
 
     def _start_health(self) -> None:
         if not self.ctx.run_task("HEALTH CHECK", lambda progress: self.ctx.controller.check_illustrator()):
