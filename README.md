@@ -29,11 +29,13 @@ PDF page
 
 ## Status
 
-Version **0.5.0**. The Python pipeline, the JSX worker, the one page milestone, the
+Version **0.6.0**. The Python pipeline, the JSX worker, the one page milestone, the
 **persistent batch queue** (state.json, recovery, continue/retry, CLI), the
-**Tkinter GUI** and the **multi PDF project queue** (several PDFs per JOB, one plan
-and one set of states each, explicit RECONCILE) are implemented and verified with
-real Illustrator runs. See `STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
+**Tkinter GUI**, the **multi PDF project queue** (several PDFs per JOB, one plan
+and one set of states each, explicit RECONCILE) and the **visual page browser**
+(thumbnails with their queue state, large preview, page info, PDF rendering with
+PyMuPDF on a worker thread) are implemented and verified with real Illustrator
+runs. See `STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
 
 One JOB can hold several PDFs; each has its own page plan, its own queue states and
 its own outputs (`manualis__001.ai`, `appendix__001.ai`). The order is `documents[]`
@@ -58,8 +60,9 @@ python -m venv .venv
 
 # 5. the GUI (PROJECT / PDF / MAPPING / RUN)
 .venv\Scripts\python.exe app.py
-#    NEW PROJECT or OPEN PROJECT -> pick the PDF -> check the MAPPING table ->
-#    VALIDATE -> RUN ALL ENABLED. Opening the GUI never starts Illustrator.
+#    NEW PROJECT or OPEN PROJECT -> pick the PDF -> MAPPING shows the pages as
+#    thumbnails (each with its state) + a large preview -> assign templates visually
+#    -> VALIDATE -> RUN ALL ENABLED. Opening the GUI never starts Illustrator.
 
 # 6. one page, end to end (CLI)
 .venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3
@@ -144,8 +147,12 @@ pdf_ai_batch/                 Python orchestrator
   app.py  run_one.py  batch.py  paths.py  logging_setup.py
   core/  project, pdf_info, naming, template_mapper, config, contract, pagejob,
          state, queue, jsonio, validation
+  preview/  renderer (PyMuPDF page rendering), cache (JOB/.cache/preview)
+  gui/   main_window, controller, tasks, project_tab, pdf_tab, mapping_tab,
+         preview_panel, preview_loader, run_tab
   adapters/illustrator.py     the ONLY COM code (pywin32)
-  tests/                      143 pytest tests (contract, encoding, state, queue)
+  tests/                      272 pytest tests (contract, encoding, state, queue,
+                               preview, GUI)
 
 src/                          legacy ScriptUI application (phase 1, kept as baseline)
 legacy/current_working_v10.jsx frozen baseline (generated, hashed)

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -38,6 +39,7 @@ from ..core.pdf_info import PdfPageCountError, count_pages
 from ..core.project import JobProject, ProjectError
 from ..core.queue import BatchQueue, BatchSummary, QueueError
 from ..core.template_mapper import build_page_plan, default_template, list_templates
+from ..preview.cache import PreviewCache
 
 LOGGER_NAME = "pdf_ai_batch.gui"
 
@@ -257,6 +259,7 @@ class AppController:
         self._adapter_factory = adapter_factory or self._default_adapter
         self._illustrator_state: bool | None = None
         self._last_checks: list[validation.CheckResult] = []
+        self._preview_cache: PreviewCache | None = None
 
     # ------------------------------------------------------------------ project
 
@@ -633,6 +636,34 @@ class AppController:
         except Exception as exc:  # noqa: BLE001 - an incomplete job must not crash the GUI
             self.log.warning("Nevar izveidot rindu: %s", exc)
             return []
+
+    def preview_cache(self) -> PreviewCache:
+        """The disposable preview cache of the active JOB (`JOB/.cache/preview`).
+
+        Before a JOB is open (or without one) the cache lives in the system temp
+        folder, so nothing is ever written next to the repository by accident.
+        """
+        project = self._project
+        root = (
+            project.root
+            if project is not None
+            else Path(tempfile.gettempdir()) / "cleanup_ai_preview"
+        )
+        if self._preview_cache is None or self._preview_cache.root != root:
+            self._preview_cache = PreviewCache(root)
+        return self._preview_cache
+
+    def preview_target(self) -> tuple[Path, int] | None:
+        """(pdf, page_count) of the active document, or None when there is none."""
+        if self._active_pdf is None or not self._active_pdf.is_file():
+            return None
+        try:
+            row = self.active_document()
+        except ControllerError:
+            return None
+        if row is None or row.missing:
+            return None
+        return (self._active_pdf, int(row.page_count))
 
     def refresh(self) -> list[str]:
         """Re-read state.json (another process may have written it)."""

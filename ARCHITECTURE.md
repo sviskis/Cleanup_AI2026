@@ -210,20 +210,83 @@ One JOB holds several PDFs; each one is planned, queued and reported separately.
 * **Failure isolation** (unchanged): a page level failure never stops the batch,
   not even across documents; only a global adapter/COM failure aborts the pass.
 
+## 3c. PDF preview (milestone 5)
+
+The page plan is visual: PDF pages are rendered as thumbnails and as one large
+preview, straight into the Tk GUI. **Python renders, the GUI only draws.**
+
+```text
+JOB/PDF/*.pdf
+   |
+   v  pdf_ai_batch/preview/renderer.py      PyMuPDF, one page at a time
+PNG bytes
+   |
+   v  gui/preview_loader.py                 worker thread + request generations
+   |                                        (queue.Queue -> EventBus -> root.after)
+   v  gui/preview_panel.py                  tk.PhotoImage on a canvas (display only)
+MAPPING tab: [thumbnails | large preview] + page info + page actions
+```
+
+* **`preview/renderer.py`** - `render_thumbnail` (default 160 px wide),
+  `render_preview` (longest side, default 1000 px), `page_geometry` (points, mm,
+  rotation, page count), `document_fingerprint`. Aspect ratio is always preserved,
+  the scale is clamped to `0.05 .. 4.0` (no blurry upscaling, no insane renders)
+  and every failure is a catchable `PreviewError`. PyMuPDF is imported in exactly
+  one place in the project (`core/pdf_info.load_pymupdf`).
+* **`preview/cache.py`** - `JOB/.cache/preview/*.png`, disposable at any moment
+  (gitignored). A cache file's NAME is the identity:
+  `<kind>_<pdf stem>_p<page>_<fingerprint>_<request>.png`, where the fingerprint is
+  `sha1(pdf absolute path + mtime + size)` and the request is
+  `sha1(page + kind + requested size|zoom)`. A modified PDF, a changed page or a
+  different size can therefore never hit an old file; `invalidate_pdf(pdf, keep=...)`
+  drops the entries of a replaced PDF and keeps the current one. The cache is
+  bounded (`max_bytes` / `max_files`, LRU by access time) and never enters
+  `state.json` / `config.json`.
+* **`gui/preview_loader.py`** - ONE worker thread, a priority queue (the focused
+  page first, then thumbnails) and an `EventBus` sink (`tasks.EVENT_PREVIEW`,
+  drained by the Tk main thread). Requests are de-duplicated, so re-asking for a
+  page is free. `set_document()` bumps a **generation token**: pending requests of
+  the old document are dropped before they are rendered and results of an old
+  generation are discarded instead of delivered - a thumbnail of PDF A can never
+  appear on PDF B. Nothing in this module imports Tk.
+* **`gui/preview_panel.py`** - the widgets: thumbnail grid, large preview, the
+  FIT / 100% / +/- controls, the page info block, the error/status detail line and
+  the page action buttons. It contains no PDF logic: it turns the PNG bytes it
+  receives into `tk.PhotoImage` objects and draws them.
+* **Selection stays in the Treeview.** A click on a tile only ASKS the mapping tab
+  to select those pages; the tab applies the selection to the Treeview (the single
+  source of truth, fed by the controller's plan) and then tells the panel what is
+  selected. Ctrl/Shift multi-selection and the template actions therefore reuse
+  exactly the proven controller/core calls.
+* **States are visible, not implied**: every tile prints `001` / `WAITING` /
+  `RUNNING` / `DONE` / `ERROR` / `SKIPPED` / `INTERRUPTED` (or `PREVIEW ERROR`) as
+  text; colour is only an extra. While a batch runs the rows and tiles are re-read
+  every `LIVE_STATE_REFRESH_SECONDS` (0.5 s), because a progress event only arrives
+  AFTER a page finished.
+* **A preview failure is not a processing failure**: an unrenderable page shows
+  `PREVIEW ERROR` with its reason in the detail line, the mapping table keeps
+  working and `state.json` is not touched.
+* Drift handling is unchanged: a PDF that changed keeps showing `CONFIG STALE`
+  (stored/current) and RECONCILE stays the explicit action; the changed mtime/size
+  simply produces new cache keys.
+
 ## 4. JOB layout
 
 ```text
 JOB/
   PDF/       input PDFs (recursive scan, bookkeeping folders skipped)
   TEMPLATE/  MASTER_AI_TEMPLATE.ai (default) + page templates 001_cover.ai, ...
-  CONFIG/    config.json, state.json (next milestone)
-  AI_OUT/    results: calendar__003.ai
+  CONFIG/    config.json, state.json
+  AI_OUT/    results: manualis__003.ai
   LOG/       app.log (all sessions) + batch_<timestamp>.log (one per run)
   ERROR/     reserved (layout compatibility)
+  .cache/    preview/ - disposable PDF render cache (gitignored, safe to delete)
 ```
 
 Python creates missing folders (`JobProject.ensure_structure`); the worker never
-creates project folders.
+creates project folders. The preview cache folder is the one exception: it is
+created lazily by `preview/cache.py` on the first render and only contains
+disposable files.
 
 ## 5. Naming
 

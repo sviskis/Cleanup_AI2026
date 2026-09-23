@@ -167,6 +167,43 @@ Real acceptance (two Illustrator runs of 3 + 3 pages, ~4 minutes,
 9. close/reopen the window: every state persisted, 7/7 outputs, MASTER SHA256
    unchanged, `Illustrator.Application.Documents.Count == 0`.
 
+## 0e. PDF preview + thumbnail browser (milestone 5)
+
+`pytest` (no Illustrator, no display needed for the first three files):
+
+| Test file | What it proves |
+| --- | --- |
+| `tests/test_preview_renderer.py` (15) | one page renders to PNG, thumbnail is 160 px wide, aspect ratio preserved (portrait + landscape), preview fits the longest side, `page_geometry` reports points/mm/rotation/page count, zoom clamping, missing / corrupt / empty / out-of-range pages raise `PreviewError`, `document_fingerprint` changes with the file, Latvian and space containing file names, `png_size` |
+| `tests/test_preview_cache.py` (15) | `JOB/.cache/preview` location + `.gitignore` marker, put/get round trip, same PDF+page+mtime hits the same file, a different render size is a different entry, two PDFs never collide, a modified PDF produces a new key and `invalidate_pdf(keep=...)` removes the old one (and leaves other documents alone), `clear`, `prune` by files and by bytes, disabled cache writes nothing, empty payload = miss, sanitised Latvian file names |
+| `tests/test_preview_loader.py` (13) | requests without a document are ignored, thumbnail + preview results (with geometry), the second request comes from the cache, duplicate requests are queued once, the focused page's preview jumps ahead of thumbnails, a document switch drops pending work and never delivers a foreign page, a corrupt page does not stop the others, a render failure leaves `state.json` byte identical, `invalidate_document`, results through the `EventBus`, `stop()` is clean - plus the **performance case**: 120 pages open in < 1 s with 0 synchronous renders, thumbnails arrive progressively, stale results stop at the switch |
+| `tests/test_gui_preview.py` (15) | MAPPING builds the pane for the active document, thumbnails render progressively and land in `JOB/.cache/preview`, clicking a tile selects the mapping row and previews that page, clicking a row moves the tile selection, Ctrl/Shift multi-selection, tile text comes from `state.json` (`WAITING -> DONE`), an ERROR page exposes its type/message/attempts, a PREVIEW ERROR marks only the tile and keeps `state.json`, switching PDF clears the old selection and thumbnails, reopening the JOB serves thumbnails from the cache, `FIT`/`100%`/`+`/`-` change the render size, OPEN OUTPUT uses the injected opener (and refuses a missing file or a page that is not DONE), the live RUNNING refresh, a **120 page JOB opens without rendering everything** and the architecture rule: `preview/*` has no Tk/COM, `gui/preview_*.py` has no PyMuPDF/COM and the panel never renders |
+
+Performance report (no GUI, ~1 minute, writes `temp/preview_perf_m5.txt`):
+
+```powershell
+.venv\Scripts\python.exe temp\preview_perf.py
+```
+
+It builds a 160 page PDF, measures "open + queue every thumbnail" (must stay in the
+millisecond range and render nothing synchronously), the time to the first
+thumbnail, the progressive counter, the total render time, the cache size and a
+fully cached pass, the memory per result and a document switch in the middle of
+rendering (pending requests dropped, zero foreign pages delivered). It also
+measures a real photo PDF (`temp/QUEUE_JOB/PDF/mans_fails.pdf`) for a realistic
+per-thumbnail number.
+
+Real acceptance (one Illustrator run of 3 pages + an error page + a retry, ~4
+minutes, `temp/run_gui_acceptance_m5.py`): the 20 milestone 5 steps - thumbnails,
+click page 1/3, mapping row follows, Ctrl+click assignment of `section_blue.ai`,
+switch to `appendix.pdf` and back (cached), run 3 selected pages with
+`WAITING -> RUNNING -> DONE` **on the tiles**, a locked output -> `ERROR` with its
+detail and attempts on the selected thumbnail, retry -> `DONE`, close/reopen (tile
+text == `state.json`), MASTER SHA256 unchanged, `Documents.Count == 0`.
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'; .venv\Scripts\python.exe temp\run_gui_acceptance_m5.py
+```
+
 ## 1. Automated checks
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1

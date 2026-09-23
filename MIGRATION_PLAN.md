@@ -40,9 +40,10 @@ state with recovery, milestone-first order).
 | 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **DONE** (`docs/GUI.md`, `temp/gui_acceptance.txt`) |
 | 10 | Batch policy: one bad page must not stop the batch, final summary | **DONE** for the policy + summary |
 | 11 | Multi PDF project queue: several PDFs per JOB, one plan and one set of states each | **DONE** (`docs/QUEUE_STATE.md` §4, `temp/gui_acceptance_m4.txt`) |
-| 12 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
+| 12 | PDF preview + thumbnail page browser (PyMuPDF, background rendering, disposable cache) | **DONE** (`ARCHITECTURE.md` §3c, `docs/GUI.md`, `temp/gui_acceptance_m5.txt`) |
+| 13 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
 
-## 2. What exists now (v0.5.0)
+## 2. What exists now (v0.6.0)
 
 ```text
 jsx/cleanup.jsx      canonical Illustrator engine (cleanup + document helpers + stats contract)
@@ -51,7 +52,8 @@ jsx/worker.jsx       one page worker: request -> cleanup -> template -> output A
 
 pdf_ai_batch/
   app.py             entry point: no args -> GUI, --diagnose/--health/--run-one/--batch
-  gui/               Tkinter GUI: main_window + project/pdf/mapping/run tabs,
+  gui/               Tkinter GUI: main_window + project/pdf/mapping/run tabs +
+                     preview_panel (thumbnails/preview) + preview_loader (renders),
                      controller (no Tk, no COM), tasks (worker thread + event queue),
                      context (what a tab may ask the window for)
   run_one.py         the milestone command: one page, one request, one result
@@ -69,6 +71,7 @@ pdf_ai_batch/
   core/queue.py      BatchQueue: project scope, per document runs, collision guard
   core/contract.py   request/result schemas, stats mapping, summary counters
   core/validation.py preflight checks
+  preview/           PDF rendering (renderer + disposable JOB/.cache/preview cache)
   adapters/illustrator.py  the only COM code: attach/launch/run_job/close_documents
 ```
 
@@ -78,7 +81,7 @@ Verification gates (all green):
 | --- | --- |
 | `tools/check_jsx.ps1` | 2 entry points resolve, ES3 compile OK, 0 errors / 0 warnings |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 80 Python tests |
+| `pytest` | 272 Python tests (contract, encoding, queue, multi PDF, preview, GUI) |
 | `run_one --preflight-only` on a 14 page demo job | all checks OK, request JSON written |
 
 ## 3. The one page milestone - how to finish it

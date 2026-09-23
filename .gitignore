@@ -10,6 +10,9 @@ runtime/*
 *.log
 *.tmp
 
+# disposable render cache (JOB/.cache/preview) - safe to delete, never committed
+**/.cache/
+
 # keep the folder markers and documentation of ignored runtime folders
 !logs/.gitkeep
 !logs/README.md

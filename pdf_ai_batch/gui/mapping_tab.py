@@ -8,12 +8,14 @@ into `state.json` by the core queue - the GUI never writes state itself.
 from __future__ import annotations
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from ..core import state
 from .controller import ControllerError, MappingRow
 from .context import GuiContext
+from .preview_panel import PreviewPanel
 
 STATE_COLOURS = {
     state.DONE: "#1a7f37",
@@ -129,13 +131,15 @@ class MappingTab(ttk.Frame):
         self.ctx = context
         self._rows: list[MappingRow] = []
         self._buttons: list[ttk.Button] = []
+        #: the visual page browser (thumbnails + preview); None without a loader
+        self.preview_panel: PreviewPanel | None = None
         self._build()
 
     # ------------------------------------------------------------------ widgets
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(4, weight=1)
 
         #: which document this table edits - plan edits never leak into another PDF
         self.document_label = ttk.Label(self, text="PDF: -", font=("Segoe UI", 10, "bold"))
@@ -165,9 +169,16 @@ class MappingTab(ttk.Frame):
             button.grid(row=row, column=column, sticky="ew", padx=2, pady=2)
             self._buttons.append(button)
 
+        loader = getattr(self.ctx, "preview_loader", None)
+        if loader is not None:
+            self.preview_panel = PreviewPanel(self, self.ctx, loader)
+            self.preview_panel.on_select_pages = self.on_preview_select
+            self.preview_panel.on_action = self.on_preview_action
+            self.preview_panel.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+
         columns = ("use", "page", "template", "layer", "output", "status")
         frame = ttk.Frame(self)
-        frame.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        frame.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="extended")
@@ -195,15 +206,15 @@ class MappingTab(ttk.Frame):
         self.tree.tag_configure("disabled", background="#f2f2f2")
 
         bottom = ttk.Frame(self)
-        bottom.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        bottom.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         bottom.columnconfigure(0, weight=1)
         self.detail = ttk.Label(bottom, text="", foreground="#444", wraplength=900, justify="left")
         self.detail.grid(row=0, column=0, sticky="w")
 
         panel = ttk.LabelFrame(self, text="Pārbaudes (core/validation)")
-        panel.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        panel.grid(row=6, column=0, sticky="ew", pady=(8, 0))
         panel.columnconfigure(0, weight=1)
-        self.report = tk.Text(panel, height=7, wrap="none", state="disabled")
+        self.report = tk.Text(panel, height=5, wrap="none", state="disabled")
         self.report.grid(row=0, column=0, sticky="ew")
         report_scroll = ttk.Scrollbar(panel, orient="vertical", command=self.report.yview)
         report_scroll.grid(row=0, column=1, sticky="ns")
@@ -395,8 +406,12 @@ class MappingTab(ttk.Frame):
         )
         self.ctx.refresh()
 
-    def _on_selection(self, _event: Any = None) -> None:
+    def _on_selection(self, _event: Any = None, *, focus: int | None = None) -> None:
         rows = [row for row in self._rows if row.job_id in set(self.selected_job_ids())]
+        if self.preview_panel is not None:
+            pages = sorted(row.page for row in rows)
+            target = focus if focus is not None else (rows[0].page if rows else None)
+            self.preview_panel.select_pages(pages, focus=target)
         if not rows:
             self.detail.configure(text="")
             return
@@ -409,6 +424,96 @@ class MappingTab(ttk.Frame):
         if row.detail:
             text += f" | {row.detail}"
         self.detail.configure(text=text)
+
+    # ------------------------------------------------------------------ preview
+
+    def on_preview_select(self, pages: list[int], focus: int | None = None) -> None:
+        """A thumbnail click: mirror it into the Treeview (the selection authority)."""
+        by_page = {row.page: row.job_id for row in self._rows}
+        job_ids = [by_page[page] for page in pages if page in by_page]
+        self.tree.selection_remove(*self.tree.selection())
+        for job_id in job_ids:
+            self.tree.selection_add(job_id)
+        if focus is not None and focus in by_page:
+            self.tree.see(by_page[focus])
+        self._on_selection(focus=focus)  # panel + detail follow immediately
+
+    def on_preview_action(self, name: str, pages: list[int] | None = None) -> None:
+        """Preview buttons reuse the existing mapping actions (no new semantics).
+
+        `pages` is what the operator sees selected in the thumbnail browser; it is
+        mirrored into the Treeview FIRST, because the Treeview stays the single
+        source of truth for the selection the actions work on.
+        """
+        self._apply_preview_selection(pages)
+        handlers = {
+            "assign": self.on_assign_template,
+            "default": self.on_use_default,
+            "enable": self.on_enable,
+            "disable": self.on_disable,
+            "reset": self.on_reset,
+            "open_output": self.on_open_output,
+        }
+        handler = handlers.get(name)
+        if handler is None:
+            return
+        handler()
+
+    def _apply_preview_selection(self, pages: list[int] | None) -> None:
+        """Make the Treeview selection match the preview's (when they differ)."""
+        if not pages:
+            return
+        by_page = {row.page: row.job_id for row in self._rows}
+        job_ids = sorted(by_page[page] for page in pages if page in by_page)
+        if not job_ids or sorted(self.selected_job_ids()) == job_ids:
+            return
+        self.tree.selection_remove(*self.tree.selection())
+        for job_id in job_ids:
+            self.tree.selection_add(job_id)
+        self.tree.see(job_ids[0])
+        self._on_selection()
+
+    def on_open_output(self) -> None:
+        """OPEN OUTPUT: hand a DONE page's AI to the OS default (never edited here)."""
+        pages = self.selected_pages()
+        row = next((candidate for candidate in self._rows if pages and candidate.page == pages[0]), None)
+        if row is None:
+            self.ctx.report("Nav atlasīta neviena lapa", error=True)
+            return
+        path = Path(str(row.output_path))
+        if row.state != state.DONE:
+            self.ctx.report(
+                f"Lapa {row.page_label}: stāvoklis {row.state}, nevis DONE - output netiek atvērts",
+                error=True,
+            )
+            return
+        if not path.is_file():
+            self.ctx.report(
+                f"Output nav atrasts: {path.name} (state DONE) - pārbaudi ar VALIDATE", error=True
+            )
+            return
+        try:
+            self.ctx.open_file(path)
+        except Exception as exc:  # noqa: BLE001 - opening a file is best effort
+            self.ctx.report(f"Output nevar atvērt: {exc}", error=True)
+            return
+        self.ctx.report(f"Atveru output: {path.name}")
+
+    def on_preview_result(self, result: Any) -> None:
+        """Forward one finished render (called by the window's event pump)."""
+        if self.preview_panel is not None:
+            self.preview_panel.on_preview_result(result)
+
+    def _sync_preview(self) -> None:
+        """Show the active document in the preview pane (thumbnails + preview)."""
+        if self.preview_panel is None:
+            return
+        try:
+            document = self.ctx.controller.active_document()
+        except ControllerError:
+            document = None
+        pdf = self.ctx.controller.active_pdf if document is not None else None
+        self.preview_panel.show_document(pdf, self._rows, document)
 
     # ------------------------------------------------------------------ refresh
 
@@ -439,6 +544,7 @@ class MappingTab(ttk.Frame):
         if restored:
             self.tree.selection_set(restored)
         self._on_selection()  # keep the detail line in sync (also clears a stale message)
+        self._sync_preview()
         if self.report.get("1.0", tk.END).strip() == "":
             self._set_report(self.ctx.controller.validation_report())
 
@@ -446,3 +552,5 @@ class MappingTab(ttk.Frame):
         """While a batch runs, plan edits are disabled (the worker owns state.json)."""
         for button in self._buttons:
             button.configure(state="disabled" if busy else "normal")
+        if self.preview_panel is not None:
+            self.preview_panel.set_busy(busy)

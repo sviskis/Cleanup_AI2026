@@ -5,6 +5,96 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
+## [0.6.0] - 2026-09-23
+
+Milestone 5: **PDF preview + thumbnail page browser**. The MAPPING tab now shows the
+pages of the active PDF as thumbnails with one larger preview, the page size, the
+template/layer/output/state of the selected page and the page actions. Rendering is
+PyMuPDF on a background worker; Illustrator is never contacted for a preview.
+`jsx/*` and the Python <-> JSX contract are untouched.
+
+### Added
+
+- `pdf_ai_batch/preview/` - the only place that renders PDFs:
+  * `renderer.py` - `render_thumbnail` (160 px wide default), `render_preview`
+    (1000 px longest side default), `page_geometry` (points/mm/rotation/page count),
+    `document_fingerprint`, `png_size`. Aspect ratio always preserved, scale clamped
+    to `0.05 .. 4.0`, every failure raised as `PreviewError` (corrupt page, corrupt
+    file, missing file, out of range page). PyMuPDF is imported only through
+    `core/pdf_info.load_pymupdf`.
+  * `cache.py` - disposable disk cache in `JOB/.cache/preview` (`PreviewCache`).
+    The FILE NAME is the identity: `sha1(pdf path + mtime + size)` for the document
+    plus `sha1(page + kind + requested size|zoom)` for the request, so a modified
+    PDF or a different render size can never hit a stale image. `invalidate_pdf`
+    (keep/remove), `clear`, `prune` (LRU, `max_bytes` / `max_files`), `stats`.
+    The folder is gitignored and safe to delete by hand.
+- `gui/preview_loader.py` - background rendering: one worker thread, a priority
+  queue (focused page first), request de-duplication, an `EventBus` sink
+  (`tasks.EVENT_PREVIEW`), and a **generation token** per document so pending
+  renders are dropped and results of a previous PDF are never delivered. Tk-free.
+- `gui/preview_panel.py` - the MAPPING preview pane: thumbnail grid (click =
+  select, Ctrl = toggle, Shift = range, wheel scroll, lazy loading of the visible
+  tiles), large preview with `FIT` / `100%` / `+` / `-`, page info (PDF, page
+  n / total, size in mm, template, layer, output, state, attempts), the error detail
+  line and `ASSIGN TEMPLATE TO SELECTED` / `USE DEFAULT TEMPLATE` / `ENABLE` /
+  `DISABLE` / `RESET` / `OPEN OUTPUT`. Contains no PDF logic at all.
+- `mapping_tab.py` - the preview pane above the table, two-way synchronisation
+  (tile click -> Treeview selection -> detail line; Treeview row -> tile highlight
+  + preview), `OPEN OUTPUT` for DONE pages (refused when the state is not DONE or
+  the file is gone), `_apply_preview_selection` so every action uses the Treeview
+  selection as the single source of truth.
+- `gui/__init__.py` - `LIVE_STATE_REFRESH_SECONDS` (0.5 s) and
+  `MainWindow._maybe_refresh_live_states`: while a batch runs the mapping rows and
+  tiles are re-read, so the tile of the page being processed really shows `RUNNING`.
+- `gui/context.py` - `preview_loader` and the `open_file` seam (`os.startfile` on
+  Windows, injectable for tests).
+- `gui/controller.py` - `preview_cache()` (per JOB) and `preview_target()`.
+- Tests: `tests/test_preview_renderer.py` (15), `tests/test_preview_cache.py` (15),
+  `tests/test_preview_loader.py` (13, including the 160 page progressive/stale
+  generation case) and `tests/test_gui_preview.py` (15, Tk, including the
+  thumbnail <-> mapping synchronisation, ERROR detail, PREVIEW ERROR isolation and
+  the 120 page "opening renders almost nothing" case).
+- Tools: `temp/preview_perf.py` (performance report -> `temp/preview_perf_m5.txt`)
+  and `temp/run_gui_acceptance_m5.py` (the milestone 5 acceptance on a real JOB).
+
+### Changed
+
+- `main_window.py` - the window owns the `PreviewLoader` (created with the JOB's
+  cache), drains `EVENT_PREVIEW` in `_pump`, refreshes the cache root when the JOB
+  changes and stops the render worker on close.
+- `tasks.py` - `EVENT_PREVIEW`.
+- `.gitignore` - `**/.cache/`.
+- Docs: `ARCHITECTURE.md` §3c (preview pipeline, cache identity, generations),
+  JOB layout (`.cache/preview`), `docs/GUI.md` (preview pane, synchronisation,
+  live states, OPEN OUTPUT), `docs/TESTING.md` (preview tests + performance run).
+
+### Fixed
+
+- A window resize used to blank the thumbnail browser (`_draw_tiles` rebuilt the
+  canvas while `_requested` still reported the page as queued); already rendered
+  tiles are now repainted from the decoded image cache.
+- `_ensure_visible` passed a tile-relative fraction to `yview_moveto`, which scrolled
+  the browser to the very bottom when a page was selected; it now uses the real
+  content height and leaves an unmapped canvas alone.
+- The large preview was re-requested on every refresh (each progress event) and the
+  zoom label showed the renderer's fit scale instead of the operator's choice; both
+  are now keyed on (page, size, zoom).
+
+### Notes
+
+- `pytest`: 273 tests (58 new in this milestone). `tools/check_jsx.ps1` and
+  `tools/run_tests.ps1` stay green (no JSX and no contract change in this milestone).
+- Performance (160 synthetic pages, `temp/preview_perf_m5.txt`): opening the
+  document + queueing 160 thumbnails = 1.3 ms, first thumbnail after 0.03 s, all
+  160 render in 2.2 s, 161 cache files = 0.2 MB, a full cached pass = 0.04 s, and a
+  document switch mid-render drops 131 pending requests with zero foreign pages
+  delivered.
+- Real acceptance (`temp/gui_acceptance_m5.txt`): all 20 steps passed, including
+  `WAITING -> RUNNING -> DONE` on the thumbnails, an ERROR page showing
+  `OUTPUT_PREP_FAILED: ... WinError 32 ...` with attempts, the retry to DONE,
+  reopening the GUI (tile text == state.json, cached thumbnails) and
+  `Illustrator Documents.Count == 0`.
+
 ## [0.5.0] - 2026-09-23
 
 Milestone 4: **multi PDF project queue**. One JOB now holds several PDFs, each with

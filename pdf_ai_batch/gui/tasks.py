@@ -24,6 +24,7 @@ EVENT_LOG = "log"
 EVENT_PROGRESS = "progress"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
+EVENT_PREVIEW = "preview"
 
 TaskFn = Callable[[Callable[[Any], None]], Any]
 

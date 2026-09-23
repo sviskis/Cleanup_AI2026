@@ -8,17 +8,19 @@ Threading model (see docs/GUI.md): the Tk main thread only builds widgets,
 from __future__ import annotations
 
 import logging
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
 from .. import __version__
 from ..logging_setup import configure_console, setup_logging
-from . import APP_TITLE, LOG_POLL_MS, MIN_HEIGHT, MIN_WIDTH, tasks
+from . import APP_TITLE, LIVE_STATE_REFRESH_SECONDS, LOG_POLL_MS, MIN_HEIGHT, MIN_WIDTH, tasks
 from .context import GuiContext
 from .controller import AppController
 from .mapping_tab import MappingTab
 from .pdf_tab import PdfTab
+from .preview_loader import PreviewLoader
 from .project_tab import ProjectTab
 from .run_tab import RunTab
 
@@ -44,7 +46,10 @@ class MainWindow(tk.Tk):
         self.bus = tasks.EventBus()
         self.runner = tasks.TaskRunner(self.bus)
         self.controller = controller or AppController(adapter_factory=adapter_factory)
+        #: background PDF renders (thumbnails + previews); never touches widgets
+        self.preview_loader = PreviewLoader(self.controller.preview_cache(), bus=self.bus)
         self._job_log_dir = None
+        self._live_refresh_at = 0.0
 
         setup_logging(None, console=False)  # per JOB file logging starts on open
         self._attach_log_handler()
@@ -57,6 +62,7 @@ class MainWindow(tk.Tk):
             run_task=self.run_task,
             busy=lambda: self.runner.busy,
             window=self,
+            preview_loader=self.preview_loader,
         )
         self._build()
 
@@ -142,8 +148,25 @@ class MainWindow(tk.Tk):
                 self._on_task_done(event.payload)
             elif event.kind == tasks.EVENT_ERROR:
                 self.run_tab.show_error(event.payload)
+            elif event.kind == tasks.EVENT_PREVIEW:
+                self.mapping_tab.on_preview_result(event.payload)
         self._render_busy()
+        self._maybe_refresh_live_states(time.monotonic())
         self._pump_id = self.after(LOG_POLL_MS, self._pump)
+
+    def _maybe_refresh_live_states(self, now: float) -> None:
+        """While a batch runs, keep the rows/tiles showing RUNNING.
+
+        A progress event only arrives AFTER a page finished, so without this the
+        thumbnails would jump WAITING -> DONE and never show the page that is being
+        processed right now (milestone 5: the state must be visible on the tile).
+        """
+        if not self.runner.busy:
+            return
+        if now - self._live_refresh_at < LIVE_STATE_REFRESH_SECONDS:
+            return
+        self._live_refresh_at = now
+        self.mapping_tab.refresh()
 
     def _on_task_done(self, payload: Any) -> None:
         from ..core.queue import BatchSummary
@@ -180,6 +203,8 @@ class MainWindow(tk.Tk):
     def refresh_all(self) -> None:
         """Rebuild every tab from the controller (never from GUI-owned state)."""
         self._ensure_job_logging()
+        # the preview cache follows the JOB (JOB/.cache/preview); before that: temp
+        self.preview_loader.cache = self.controller.preview_cache()
         if self.controller.project is not None:
             # opening a JOB must show the project queue (both PDFs, states included)
             self.controller.ensure_queue_built()
@@ -211,6 +236,10 @@ class MainWindow(tk.Tk):
             except Exception:  # noqa: BLE001 - the window may already be gone
                 pass
             self._pump_id = None
+        try:
+            self.preview_loader.stop()  # the render worker must not outlive the window
+        except Exception:  # noqa: BLE001 - closing must always succeed
+            pass
         self.bus.close()
         self.destroy()
 

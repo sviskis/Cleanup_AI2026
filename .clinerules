@@ -25,6 +25,15 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
 - **Python owns orchestration** (project folders, PDF discovery, page count,
   template mapping, naming, config, queue/state, logging, validation).
   **JSX owns Illustrator** (documents, DOM, cleanup, template/ARTWORK, save).
+- **PDF rendering lives in `pdf_ai_batch/preview/`** and nowhere else: PyMuPDF only
+  (never Illustrator, Acrobat/COM, OCR, Ghostscript, ImageMagick or an external
+  viewer). `renderer.py` renders one page at a time and always through
+  `core/pdf_info.load_pymupdf`; `cache.py` owns the disposable
+  `JOB/.cache/preview` (cache key = pdf path + mtime + size + page + render size,
+  gitignored, safe to delete). `gui/preview_loader.py` renders on one worker thread
+  with a generation token per document; `gui/preview_panel.py` only draws the PNG
+  bytes it receives. The GUI never imports PyMuPDF, and a preview failure is never a
+  queue state (a broken page shows `PREVIEW ERROR`, `state.json` stays untouched).
 - **JSON is the only contract.** Business data never travels through COM
   arguments; use `runtime/current_job.json` and `runtime/current_result.json`
   (both written atomically, accepted only when `job_id` **and** `run_id` match).
@@ -54,6 +63,9 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
   work runs in a `TaskRunner` worker thread and comes back through `queue.Queue` +
   `root.after` (widgets are only touched in `_pump()`); opening the window keeps the
   adapter lazy, so no COM call happens until a run or an explicit health check.
+  Preview renders use the same pattern (`gui/preview_loader.py` -> `EVENT_PREVIEW`
+  -> `_pump()`), never a second Tk thread and never a synchronous render of a whole
+  PDF.
 - **Always close the source PDF without saving.**
 - **Outputs only go to `AI_OUT`.** Respect `overwrite` and `dryRun`.
 - Keep UTF-8 without BOM and LF line endings in JSX
@@ -88,6 +100,7 @@ controller/task/window logic - the window test skips itself without a display).
    tests next to the code (`pdf_ai_batch/tests/`). GUI code goes to
    `pdf_ai_batch/gui/*`: one tab or concern per module, `controller.py` stays free of
    Tk and COM, and `main_window.py` stays a coordinator (never a 1500 line file).
+   PDF rendering goes to `pdf_ai_batch/preview/*` (renderer + cache only).
 4. Test in Illustrator with a small JOB (1 PDF, 2-3 pages) before a real batch.
 5. Change behaviour? Document it in `CHANGELOG.md`, `STATUS.md` and, when the
    contract changes, in `ARCHITECTURE.md`.

@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.5.0
+Version: 0.6.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own plan, outputs and persistent states); the GUI drives them with RUN CURRENT PDF / RUN ALL ENABLED PDFs / CONTINUE PROJECT / RETRY PROJECT ERRORS, shows CONFIG STALE / MISSING PDF and reconciles explicitly; a real two PDF Illustrator run passed**
+Status: **Milestone 5 done - the MAPPING tab is a visual page browser (thumbnails with their queue state, one large preview with FIT / 100% / + / -, page size, template/layer/output/state and the page actions); rendering is PyMuPDF on a background worker thread with a disposable `JOB/.cache/preview`; a real 20 step acceptance run (two PDFs, template assignment from the tiles, an ERROR page with its detail, retry, reopen) passed**
 
 ## Working
 
@@ -102,6 +102,36 @@ Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own p
   RUN tab has the project actions and a per document progress list; screenshots
   `temp/gui_m4_pdf.png`, `temp/gui_m4_run.png`, `temp/gui_m4_reopen.png`.
 
+### Visual page browser (milestone 5)
+
+* `pdf_ai_batch/preview/` is the only renderer: `renderer.py` (PyMuPDF, one page at
+  a time: thumbnail 160 px, preview 1000 px longest side, `page_geometry` in
+  points/mm, `document_fingerprint`, `png_size`; aspect ratio preserved, scale
+  clamped, every failure a `PreviewError`) and `cache.py` (disposable
+  `JOB/.cache/preview`, the file name carries pdf + mtime + size + page + render
+  size, `invalidate_pdf`, `clear`, `prune`, `stats`).
+* `gui/preview_loader.py` renders on ONE worker thread with a priority queue
+  (focused page first), request de-duplication and a generation token per document:
+  a stale thumbnail can never be painted on another PDF, and switching documents
+  drops the pending work instead of rendering it. Results travel through
+  `tasks.EVENT_PREVIEW` into `MainWindow._pump`, so only the Tk thread touches
+  widgets. No Tk, no COM, no Illustrator.
+* The MAPPING tab shows `[thumbnails | large preview]` above the table, with the
+  page info block (PDF, page / total, size, template, layer, output, state,
+  attempts), the error/output detail line and the page actions; clicking a tile or a
+  row keeps both views in sync (the Treeview stays the single selection source).
+  Tiles print `001 WAITING` / `DONE` / `RUNNING` / `ERROR` / `PREVIEW ERROR`, so the
+  state never depends on colour alone. `OPEN OUTPUT` opens a DONE page's AI with the
+  OS default and refuses missing files or unfinished pages.
+* While a batch runs the rows and tiles are re-read every 0.5 s, so the page being
+  processed is visibly `RUNNING` (a progress event alone only arrives afterwards).
+* A page that cannot be rendered shows `PREVIEW ERROR`; the plan, the table and
+  `state.json` are untouched - preview failure is never a processing state.
+* Performance: a 160 page PDF opens instantly (1.3 ms to queue every thumbnail, 0
+  synchronous renders), the first thumbnail appears after 0.03 s, all 160 render in
+  2.2 s, a fully cached pass takes 0.04 s and the cache is 0.2 MB for the whole
+  document (`temp/preview_perf_m5.txt`).
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -115,7 +145,7 @@ Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own p
 | --- | --- |
 | `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring, `jsx/` ASCII only + no BOM + LF) |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 215 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, multi PDF queue (identity, drift, reconcile, collisions), GUI controller/tasks/window, GUI multi PDF |
+| `pytest` | 273 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, multi PDF queue (identity, drift, reconcile, collisions), GUI controller/tasks/window, GUI multi PDF, PDF preview (renderer, cache, background loader, thumbnail browser) |
 | `app.py --diagnose` | paths and interpreter reported |
 | `run_one --preflight-only` (14 page demo PDF) | 17 checks OK, request JSON written to `runtime/current_job.json` |
 | `run_one --dry-run` | valid contract request produced |
@@ -125,6 +155,8 @@ Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own p
 | **13 page pass** of the same PDF through the queue | `DONE=13 SKIPPED=1`, `state.json` written after every page, 0 documents left open |
 | **GUI acceptance, real Illustrator** (`temp/run_gui_acceptance.py`, `temp/gui_acceptance.txt`) | Open JOB -> PDF shows 14 pages (PyMuPDF) -> 14 mapping rows with the persisted states -> RESET SELECTED + manual template change -> VALIDATE 24 checks / 0 errors -> RUN SELECTED: live `WAITING -> RUNNING -> DONE` x3 -> forced ERROR (`OUTPUT_PREP_FAILED`, locked output) -> RETRY ERRORS: `ERROR -> WAITING -> RUNNING -> DONE` -> window closed and reopened: states restored -> 0 Illustrator documents open. Screenshots: `temp/gui_mapping.png`, `temp/gui_run.png` |
 | **GUI acceptance, TWO PDFs in one JOB** (`temp/run_gui_acceptance_m4.py`, `temp/gui_acceptance_m4.txt`) | Both PDFs detected (3 + 3 pages, `WAITING 3` each) -> both configured, config order `[manualis, appendix]` -> RUN CURRENT PDF: manualis `WAITING -> RUNNING -> DONE` x3 while appendix stays `WAITING 3` -> RUN ALL ENABLED PDFs: appendix DONE x3 -> appendix grew to 4 pages: `CONFIG STALE (stored: 3, current: 4)` with `config.json` unchanged -> RECONCILE: page 004 WAITING, states kept -> locked output + RESET in manualis: `manualis.pdf#2 WAITING -> ERROR` **while** `appendix.pdf#4` ran to DONE -> RETRY PROJECT ERRORS: `ERROR -> RUNNING -> DONE` -> closed/reopened: every state persisted, 7/7 outputs (`manualis__001..003.ai`, `appendix__001..004.ai`) -> MASTER SHA256 unchanged -> 0 Illustrator documents open. Screenshots: `temp/gui_m4_pdf.png`, `temp/gui_m4_run.png`, `temp/gui_m4_reopen.png` |
+| **GUI acceptance, visual page browser** (`temp/run_gui_acceptance_m5.py`, `temp/gui_acceptance_m5.txt`) | Thumbnails for `manualis.pdf` (3 pages, states printed on each tile) -> click 001 / 003: preview + page info (322 x 447 mm) follow, the mapping row follows too -> Ctrl+click 002+003 and `ASSIGN TEMPLATE TO SELECTED` -> `section_blue.ai` in `config.json` -> switch to `appendix.pdf` (its thumbnails) and back (cached, 0.33 s) -> RUN SELECTED x3: tiles `WAITING -> RUNNING -> DONE`, `state.json` identical -> locked output + RESET: tile `ERROR` with `OUTPUT_PREP_FAILED: ... WinError 32 ...` and attempts -> RETRY: `ERROR -> RUNNING -> DONE` -> close/reopen: tile text == `state.json`, config untouched -> MASTER SHA256 unchanged -> 0 Illustrator documents open. Screenshots: `temp/gui_m5_a_thumbnails.png`, `gui_m5_b_assigned.png`, `gui_m5_c_pdf_b.png`, `gui_m5_d_error.png`, `gui_m5_e_reopen.png` |
+| **Preview performance, 160 pages** (`temp/preview_perf.py`, `temp/preview_perf_m5.txt`) | open + queue 160 thumbnails = 1.3 ms with 0 synchronous renders -> first thumbnail after 0.03 s -> progressive (2 s: 152) -> all 160 + 1 preview in 2.2 s (14 ms each) -> cache 161 files / 0.2 MB -> fully cached pass 0.04 s (0.3 ms each) -> document switch mid-render: 131 pending requests dropped, 0 foreign pages delivered; a real photo PDF renders ~110 ms per thumbnail |
 | Adapter handshake (fake Illustrator) | stale result deleted, matching result accepted, mismatching result rejected + logged, late result picked up, timeout with log tail, COM error as `ERROR` result |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
@@ -150,6 +182,10 @@ Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own p
   but has not been exercised with a real `.ait` file.
 * The visual result of the shared cleanup engine in the new pipeline is covered
   only by the manual checklist (`docs/TESTING.md` §2).
+* The preview pane has no per page text extraction, no OCR and no content based
+  template suggestion - by design (`docs/GUI.md` "Not in this milestone"). The
+  preview cache is never cleaned automatically inside the GUI; delete
+  `JOB/.cache` by hand or let `prune()` keep it bounded (200 MB / 4000 files).
 
 ## Known bugs / open issues
 
@@ -171,3 +207,5 @@ Status: **Milestone 4 done - one JOB now holds several PDFs (each with its own p
 4. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
 5. Optional: per document RECONCILE report in the log file, and a "RECONCILE ALL"
    action for a JOB whose PDFs were all replaced.
+6. Optional preview extras: a thumbnail size preference, "CLEAR PREVIEW CACHE" in
+   the GUI, and a preview of the assigned template next to the page preview.

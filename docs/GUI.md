@@ -1,4 +1,4 @@
-# GUI (milestones 3-4) - Cleanup AI 2026
+# GUI (milestones 3-5) - Cleanup AI 2026
 
 `python app.py`  (or `python app.py --gui`, or `python -m pdf_ai_batch.gui`) opens the
 Tkinter window. Opening it **never** launches Illustrator: Illustrator is only
@@ -54,7 +54,7 @@ run_task(label, task)  --------------->  TaskRunner thread: BatchQueue + adapter
 |---|---|---|
 | PROJECT | NEW PROJECT / OPEN PROJECT / ADD PDF / ADD TEMPLATES / OPEN JOB FOLDER; shows the six JOB folders with their state | `core/project.py` |
 | PDF | the JOB's **document list**: `USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS` plus IZMANTOT (makes it the active document), IESLĒGT/IZSLĒGT (USE), RECONCILE, PIEVIENOT PDF..., ATJAUNOT; details: path, page count, method, size, config status, queue status, document status | `core/pdf_info.py`, `core/pagejob.py`, `core/config.py`, `core/queue.py` |
-| MAPPING | the plan of the **active document** (`PDF: manualis.pdf | Lapas: 42`): `USE / PAGE / TEMPLATE / LAYER / OUTPUT / STATUS` table, SELECT ALL/NONE, ENABLE/DISABLE SELECTED, RESET SELECTED, VALIDATE, AUTO ASSIGN TEMPLATES, ASSIGN TEMPLATE, USE DEFAULT TEMPLATE, RECONCILE PDF, double click = change the template of that row | `core/pagejob.py`, `core/template_mapper.py`, `core/config.py`, `core/naming.py`, `core/queue.py`, `core/validation.py` |
+| MAPPING | the plan of the **active document** (`PDF: manualis.pdf | Lapas: 42`) as a **visual page browser**: thumbnails with the page state, one large preview (FIT / 100% / + / -), the page info block and the page actions; below that the `USE / PAGE / TEMPLATE / LAYER / OUTPUT / STATUS` table with SELECT ALL/NONE, ENABLE/DISABLE SELECTED, RESET SELECTED, VALIDATE, AUTO ASSIGN TEMPLATES, ASSIGN TEMPLATE, USE DEFAULT TEMPLATE, RECONCILE PDF, double click = change the template of that row | `core/pagejob.py`, `core/template_mapper.py`, `core/config.py`, `core/naming.py`, `core/queue.py`, `core/validation.py`, `preview/*` |
 | RUN / LOG | RUN SELECTED, RUN CURRENT PDF, RUN ALL ENABLED PDFs, CONTINUE PROJECT, RETRY PROJECT ERRORS, RETRY INTERRUPTED, REFRESH STATUS, HEALTH CHECK, overwrite checkbox, project + document progress (`PDFs: 2 | Lapas kopā: 7`, `appendix.pdf - lapa 004 / 004`, one line per document) and the live log | `core/queue.py`, `core/state.py`, `adapters/illustrator.py` |
 
 ### Documents (milestone 4)
@@ -87,6 +87,59 @@ run_task(label, task)  --------------->  TaskRunner thread: BatchQueue + adapter
   width the naming rules use.
 * STATUS colours are a hint only - the state text is always shown.
 
+### Visual page browser (milestone 5)
+
+The MAPPING tab starts with a preview pane and then the table:
+
+```text
++------------------------------------------------------------------+
+| PDF: manualis.pdf | Lapas: 42                       OK (config)  |
++------------------------------+-----------------------------------+
+| Lapas (thumbnail)            | Priekšskatījums                   |
+|  [001]  [002]  [003]         |            PAGE IMAGE             |
+|  WAITING  DONE  ERROR        |      FIT | 100% | + | - | fit      |
++------------------------------+-----------------------------------+
+| PDF / Lapa / Izmērs / Template / Layer / Output / Statuss        |
+| error or output detail line                                      |
+| ASSIGN TEMPLATE TO SELECTED | USE DEFAULT TEMPLATE | ENABLE ...  |
++------------------------------------------------------------------+
+| MAPPING TABLE  USE PAGE TEMPLATE LAYER OUTPUT STATUS              |
++------------------------------------------------------------------+
+```
+
+* **Every tile prints its page number and its state** (`WAITING`, `RUNNING`, `DONE`,
+  `ERROR`, `SKIPPED`, `INTERRUPTED`, `PREVIEW ERROR`); the frame colour is an extra,
+  never the only signal.
+* **Click** a tile = select that page, **Ctrl+click** = add/remove, **Shift+click** =
+  range, mouse wheel scrolls. Selection is applied to the MAPPING Treeview (the
+  single source of truth), so the detail line, the row highlight and the preview all
+  follow, and the reverse holds too: selecting a row highlights the tile and re-renders
+  the preview.
+* **Page info** shows PDF, `page / total`, size in mm (from PyMuPDF), template,
+  layer, output and state, plus the attempts counter; for an `ERROR` page it also
+  shows `error_type: error_message` and for an `INTERRUPTED` page the reason. A DONE
+  page whose output vanished says `[nav atrasts, lai gan DONE]`.
+* **Actions** (`ASSIGN TEMPLATE TO SELECTED`, `USE DEFAULT TEMPLATE`, `ENABLE`,
+  `DISABLE`, `RESET`) call exactly the same controller/core functions as the table
+  buttons. **OPEN OUTPUT** opens the finished AI with the Windows default
+  (`os.startfile`), only when the page is `DONE` and the file exists - the AI is never
+  modified.
+* **Rendering happens in Python** (`pdf_ai_batch/preview`, PyMuPDF) on a worker
+  thread; results travel through the event bus (`tasks.EVENT_PREVIEW`) and only the
+  `_pump()` in the Tk thread touches widgets. Thumbnails are requested for the pages
+  around the focus and for the visible area, so a 200 page PDF opens instantly and
+  fills in progressively; switching documents bumps a generation token that drops
+  stale work instead of painting the wrong PDF.
+* **Cache**: `JOB/.cache/preview` (disposable, gitignored, safe to delete). The file
+  name carries the PDF path + mtime + size + page + render size, so a modified PDF
+  can never show an old thumbnail.
+* **While a batch runs** the rows and tiles are re-read every 0.5 s
+  (`LIVE_STATE_REFRESH_SECONDS`), so the page being processed shows `RUNNING` and not
+  just a jump from WAITING to DONE.
+* A page that cannot be rendered shows `PREVIEW ERROR` with the reason; the table,
+  the plan and `state.json` stay untouched - a rendering problem is never a
+  processing problem.
+
 ## Overwrite
 
 `RESET SELECTED` sets a page back to `WAITING`, but an existing `AI_OUT/...ai` would
@@ -118,12 +171,32 @@ page instead of reporting `SKIP`.
 
 ## Not in this milestone
 
-No drag/drop reordering, no database/SQLite, no thumbnails/PDF preview, no
-multiprocessing, no second Illustrator instance, no parallel Illustrator work, no
-UXP, no template "intelligence", no cloud sync. (Multiple PDFs per JOB arrived in
-milestone 4; each document is still processed strictly one page at a time.)
+No drag/drop reordering, no database/SQLite, no multiprocessing, no second
+Illustrator instance, no parallel Illustrator work, no UXP, no template
+"intelligence", no cloud sync. (Multiple PDFs per JOB arrived in milestone 4 and
+the visual page browser in milestone 5; each document is still processed strictly
+one page at a time.)
+
+Deliberately still absent from the preview: **no OCR, no page text extraction, no
+image/AI analysis, no content based template choice** - the preview shows pages, it
+never interprets them.
 
 ## Acceptance evidence (real Illustrator, 2026-09-23)
+
+### Milestone 5 - the visual page browser
+
+`temp/run_gui_acceptance_m5.py` runs the 20 milestone 5 steps against the same real
+JOB (`temp/MULTI_JOB`, `manualis.pdf` 3 pages + `appendix.pdf` 3 pages, real
+Illustrator): thumbnails appear, clicking page 1/3 switches the preview and the
+mapping row, a Ctrl+click selection gets `section_blue.ai`, switching to
+`appendix.pdf` and back shows the other thumbnails and then the cached ones,
+running 3 selected pages shows `WAITING -> RUNNING -> DONE` on the tiles, a locked
+output produces `ERROR` (shown on the tile with its detail and attempts), the retry
+returns to `DONE`, reopening the GUI shows the same states (tile text ==
+state.json) and Illustrator ends with 0 open documents. Output:
+`temp/gui_acceptance_m5.txt`, screenshots `temp/gui_m5_*.png`.
+
+Performance (`temp/preview_perf.py`, 160 page PDF): see `temp/preview_perf_m5.txt`.
 
 ### Milestone 4 - two PDFs in one JOB
 
@@ -196,6 +269,10 @@ start and shows "Template 003_pagina.ai: nav atrasts" instead.
 | Stale detail line in MAPPING | showed "Nav atvērts neviens JOB" after the JOB was opened | `refresh()` re-renders the detail from the current selection |
 | `after(...)` pump outlived the window | "invalid command name ..._pump" in the console | `on_close()` cancels the pending callback |
 | (M4) PDF tab overrode a programmatic document switch | selecting a document in the controller (reconcile, acceptance, a deleted PDF) snapped back to the tree's old selection, so MAPPING showed the wrong PDF | `PdfTab.refresh()` renders the controller's active document and only falls back to its own selection when that document is gone |
+| (M5) Thumbnails vanished after a window resize | `_draw_tiles()` rebuilt the canvas, and because the page was still in `_requested` no new render came - the browser stayed empty | `_repaint_thumbnails()` re-adds already rendered tiles from the decoded image cache |
+| (M5) `_ensure_visible` scrolled to the very bottom | it passed a tile-relative fraction to `yview_moveto` (page 1: `275 / 271` -> 1.0), so the tile hit test then missed every click (`canvasy(550)` became 1354) | the fraction is now `target / content_height`, and an unmapped canvas is left alone |
+| (M5) The large preview was re-requested on every refresh | each progress event (and every zoom refresh) re-rendered the preview pane and the zoom label showed the renderer's fit scale (`60%` instead of `fit`) | the request is keyed on `(page, long_side, zoom)`, and `_zoom` only ever holds the operator's choice |
+| (M5) Tiles never showed `RUNNING` | a progress event only arrives after a page finished, so a thumbnail jumped `WAITING -> DONE` | `MainWindow._maybe_refresh_live_states()` re-reads the rows while a batch runs (0.5 s), found by the real acceptance run |
 
 ### Screenshots
 

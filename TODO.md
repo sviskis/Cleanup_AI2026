@@ -40,11 +40,25 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
       guard, explicit RECONCILE, MISSING PDF handling, PDF/MAPPING/RUN GUI updates
       and a real two PDF Illustrator acceptance (`temp/gui_acceptance_m4.txt`).
       See `docs/QUEUE_STATE.md` and `docs/GUI.md`.
+- [x] PDF preview + thumbnail page browser (milestone 5).
+      Done: `pdf_ai_batch/preview/` (PyMuPDF renderer + disposable
+      `JOB/.cache/preview` keyed on pdf + mtime + size + page + render size),
+      `gui/preview_loader.py` (one worker thread, priority queue, generations, event
+      bus), `gui/preview_panel.py` (thumbnail grid with per tile states, large preview
+      with FIT / 100% / + / -, page info, error detail, OPEN OUTPUT) and the two way
+      synchronisation with the MAPPING Treeview. See `docs/GUI.md`,
+      `ARCHITECTURE.md` §3c and `temp/gui_acceptance_m5.txt` (20 step real run).
 - [ ] "Stop after the current page" (now: close the GUI and press CONTINUE, or
   Ctrl+C leaves a recoverable `RUNNING` item for `--continue`).
 - [ ] Remember the last JOB (and its active PDF) between GUI sessions.
 
 ## P2 - Improvements
+
+- [ ] Thumbnail size preference (small / medium / large) and a "CLEAR PREVIEW CACHE"
+      button in the GUI (the cache is already bounded and gitignored).
+- [ ] Preview the assigned template next to the page preview (`.ai` rasterising is
+      not available without Illustrator, so this needs a different source, e.g. a
+      stored template thumbnail or a PDF preview export).
 
 - [ ] Escape non-ASCII text in the legacy GUI modules (`src/**/*.jsx`) the same way
       as in `jsx/` (`\uXXXX`), so the ScriptUI labels cannot be mis-decoded either.

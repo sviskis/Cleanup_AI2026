@@ -8,12 +8,16 @@ A thin presentation layer over the proven core:
     gui/project_tab.py   JOB folders, new/open project, add PDF/templates
     gui/pdf_tab.py       PDF list, page count, config status
     gui/mapping_tab.py   per page template/layer/output/status, validation
+    gui/preview_panel.py thumbnails + large preview + page info (display only)
+    gui/preview_loader.py background PDF renders (worker thread, generations)
     gui/run_tab.py       run/continue/retry, progress, live log
 
 Rules (see .clinerules and docs/GUI.md):
 
 * the GUI never touches win32com, JSX or state.json directly - everything goes
   through `gui/controller.py` and then the core modules (`core/*`, adapter)
+* PDF rendering happens in `pdf_ai_batch/preview` (PyMuPDF); the GUI only draws the
+  PNG bytes it receives through the event bus - never a COM call, never Illustrator
 * long work (a batch) runs in a worker thread; the Tk main thread only updates
   widgets, fed by a `queue.Queue` + `root.after(...)` poll
 * the GUI log view is a VIEW: the canonical logs stay in JOB/LOG/*.log
@@ -27,6 +31,9 @@ APP_TITLE = "Cleanup AI 2026"
 MIN_WIDTH = 1020
 MIN_HEIGHT = 660
 LOG_POLL_MS = 120
+#: while a batch runs the mapping rows/thumbnails are refreshed this often, so the
+#: page being processed is visibly RUNNING (progress events only arrive afterwards)
+LIVE_STATE_REFRESH_SECONDS = 0.5
 
 
 def run_gui(argv: list[str] | None = None) -> int:
@@ -36,4 +43,11 @@ def run_gui(argv: list[str] | None = None) -> int:
     return launch(argv)
 
 
-__all__ = ["APP_TITLE", "MIN_WIDTH", "MIN_HEIGHT", "LOG_POLL_MS", "run_gui"]
+__all__ = [
+    "APP_TITLE",
+    "LIVE_STATE_REFRESH_SECONDS",
+    "MIN_WIDTH",
+    "MIN_HEIGHT",
+    "LOG_POLL_MS",
+    "run_gui",
+]
