@@ -52,6 +52,22 @@ Status: **Python orchestrator + Illustrator worker implemented and verified by a
 
 ## Partially working / not yet verified
 
+* **Physical folder rename pending.** The repository identity is already
+  `sviskis/Cleanup_AI2026` / display name *Cleanup AI 2026* (see
+  `CHANGELOG.md`, commit `chore: rename project to Cleanup_AI2026`), but the local
+  folder is still `PDF_Cleanup_AI2026` because Windows refuses to rename a folder
+  that an editor has open (VS Code holds the workspace root). Close the folder in
+  VS Code, then from a plain PowerShell:
+
+  ```powershell
+  Set-Location 'C:\Users\libri\OneDrive\Dokumenti\CLINE'
+  Rename-Item -LiteralPath 'PDF_Cleanup_AI2026' -NewName 'Cleanup_AI2026'
+  ```
+
+  Nothing else has to change: every runtime path is derived from its own location,
+  git does not store the folder name and `origin` already points at the new
+  repository. `.venv\Scripts\python.exe` keeps working; only the unused
+  `activate.ps1` / `activate.bat` keep the old path (`docs/PYTHON_ENV.md`).
 * **One page end to end inside Illustrator**: the Python half is proven, the
   Illustrator half has not run yet on this machine. Procedure and pass criteria:
   `MIGRATION_PLAN.md` §3.
