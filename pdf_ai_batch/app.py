@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="store_true", help="print the version and exit")
     parser.add_argument("--diagnose", action="store_true", help="print environment and path information")
-    parser.add_argument("--health", action="store_true", help="check Illustrator/COM availability")
+    parser.add_argument("--health", action="store_true", help="check that a job can run now (files, runtime, Illustrator via attach -> launch)")
     parser.add_argument("--run-one", action="store_true", help="run the one page milestone test")
     parser.add_argument("--gui", action="store_true", help="start the GUI (next milestone)")
     parser.add_argument("rest", nargs=argparse.REMAINDER, help="arguments forwarded to --run-one")

@@ -19,9 +19,15 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
   `PDF Deep Cleanup → AI Template Batch` (a workflow label) and the engine name
   `PDF Deep Cleanup v6` were deliberately kept.
 
-### Added
+### Fixed
 
-- nothing else yet
+- `app.py --health` reported "Illustrator nav atvērts" with exit code 1 while
+  Illustrator was in fact running: `GetActiveObject` can fail even then (the
+  Running Object Table entry is not always visible, for example when the instance
+  was started elevated), while `Dispatch` connects fine. `--health` now uses the
+  same `attach -> launch` strategy as a real run - the same path `run_one` uses -
+  and prints `connected_via` (`attach (GetActiveObject)` / `launch (Dispatch)`),
+  so the check answers the question that matters: can a job run right now?
 
 ## [0.2.0] - 2026-09-23
 
