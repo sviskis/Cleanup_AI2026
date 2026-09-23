@@ -107,15 +107,6 @@ def new_config(pdf_name: str, page_count: int, pages: list[dict], defaults: dict
 
 def new_project_config(documents: list[dict], defaults: dict | None = None) -> dict:
     """Assemble a complete multi document config (keeping the given order)."""
-    return {
-        "version": CONFIG_VERSION,
-        "defaults": normalize_defaults(defaults),
-        "documents": [new_document(doc.get("pdf"), doc.get("page_count") or 1, doc.get("pages"), enabled=doc.get("enabled", True)) for doc in documents],
-    }
-
-
-def new_project_config(documents: list[dict], defaults: dict | None = None) -> dict:
-    """Assemble a complete multi document config (keeping the given order)."""
     blocks = [
         new_document(doc.get("pdf"), doc.get("page_count") or 1, doc.get("pages"), enabled=doc.get("enabled", True))
         for doc in documents

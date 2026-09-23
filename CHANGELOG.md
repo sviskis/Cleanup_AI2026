@@ -5,7 +5,106 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
-## [0.6.0] - 2026-09-23
+## [0.7.0] - 2026-09-23
+
+Milestone 6: **bulk page mapping + reusable mapping presets**. A 100-300 page plan is
+no longer a page by page job: ranges, numbered auto mapping, a mapping clipboard that
+works across documents, presets and a destructive-apply preview. Every mapping rule
+lives in one new core module and every plan change goes through one mutation funnel
+(the hook milestone 8 will snapshot in). `jsx/*`, `cleanup.jsx` and the Python <-> JSX
+contract are untouched.
+
+### Added
+
+- `pdf_ai_batch/core/mapping_rules.py` - **the only place that decides mapping**:
+  * Range parser `parse_pages`: `1`, `1-5`, `1,3,5`, `1-5,8,10-14`, `*` (all pages).
+    Rejects `0`, negatives, decimals, `1-`, `1--5`, unknown characters, pages beyond
+    the document and (unless `normalize_reversed` is set) `5-3`; the result is always
+    ascending and unique. `format_pages` compresses a page list back to `1-5,8`.
+  * Bulk assignment: `assign_template` (template + optional layer),
+    `use_default_template`, `clear_override` (template and layer back to the document
+    defaults), `set_layer`, `set_enabled` - all strictly validated against the plan.
+  * `auto_map_by_number` - deterministic page N -> the template numbered N
+    (`001_cover.ai` -> page 1). MASTER templates never enter the numbered pool, an
+    ambiguous number (two templates with the same number) is reported as a problem and
+    those pages are **not** touched, an unnumbered template is listed, a number beyond
+    the page count is informational. No fuzzy/AI matching anywhere.
+  * `copy_mapping` / `paste_mapping` - a mapping clipboard with **plan data only**
+    (`template`, `layer`, `enabled` on request, the document level `clear_layer` on
+    request). Queue state, attempts, run ids, errors and outputs never travel through
+    it. Pasting works within one PDF and across PDFs (`offset` or explicit target
+    pages), never writes beyond the destination page count (`skipped_pages`,
+    `unused_pages`, `truncated` are reported) and raises instead of guessing when
+    nothing fits.
+  * Presets: `preset_from_mapping` (the current mapping compressed into ranges),
+    `preset_path` / `save_preset` / `load_preset` / `list_presets`, `validate_preset`,
+    `preset_preview` (targets, changes, conflicts: pages beyond the document and
+    missing template files) and `apply_preset` (overlay, or `replace_all=True` for the
+    destructive variant). Schema version 1, `JOB/CONFIG/presets/<name>.json`.
+    `validate_preset` **rejects runtime keys** (`state`, `status`, `attempts`,
+    `run_id`, `error_type`, `error_message`, `output`, `job_id`, `stats`, ...), so a
+    preset can only ever contain mapping intent.
+- `pdf_ai_batch/gui/bulk_dialogs.py` - `RangeAssignDialog` (pages + template + layer +
+  enable, validating through the core parser and showing its message inline),
+  `SavePresetDialog` and `PresetDialog` (preset list, core preview with the conflicts
+  before anything is replaced, "also replace the other pages" switch). Presentation
+  only: no mapping rule, no config access.
+- Tools: `temp/run_gui_acceptance_m6.py` (36 page JOB, real GUI + Illustrator;
+  evidence `temp/gui_acceptance_m6.txt`, screenshots `temp/gui_m6_*.png`).
+- `gui/mapping_tab.py` - the MAPPING action bar is now three rows:
+  `ASSIGN TO SELECTED`, `ASSIGN TO RANGE`, `USE DEFAULT`, `CLEAR OVERRIDE`,
+  `AUTO MAP BY NUMBER`, `REFRESH`, `COPY MAPPING`, `PASTE MAPPING`, `SAVE PRESET`,
+  `LOAD / APPLY PRESET`, `AUTO ASSIGN TEMPLATES`, `RECONCILE PDF` (next to the existing
+  SELECT / ENABLE / DISABLE / RESET / VALIDATE). Dialog seams
+  (`range_dialog_factory`, `save_preset_dialog_factory`, `preset_dialog_factory`) let
+  the real handlers be tested without a user; `_handle` returns the core report (used
+  for the ambiguity problems of the numbered mapping).
+- `gui/controller.py` - `parse_pages`, `format_pages`, `assign_template_to_range`,
+  `clear_pages`, `auto_map_by_template_number`, `copy_mapping` / `mapping_clipboard` /
+  `paste_mapping`, `presets_dir` / `presets` / `preset_info` / `save_preset` /
+  `preset_preview` / `apply_preset`, plus the **single mutation funnel**
+  `_mutate_config` -> `_before_mutation` -> validate -> atomic save -> queue rebuild.
+  `_mapping_mutation` translates `MappingError` / `PresetError` into `ControllerError`,
+  so the GUI keeps one error type.
+- Tests: `tests/test_mapping_rules.py` (48: range syntax, bulk assignment, numbered
+  mapping incl. natural sort / MASTER exclusion / ambiguity, copy/paste incl. cross-PDF
+  and truncation, preset schema, apply/preview, UTF-8 names) and
+  `tests/test_gui_bulk_mapping.py` (17: the whole MAPPING action set through the
+  controller, cross-document paste, preset conflicts, the mutation funnel counter and a
+  guard that the GUI owns no mapping rule of its own).
+
+### Changed
+
+- `gui/controller.py` - `set_enabled`, `assign_template`, `use_default_template`,
+  `auto_assign_templates`, `set_document_enabled` and `reconcile_document` now all go
+  through the same funnel; `cfg.save_config` is called from exactly one place in the
+  GUI layer. `_set_pages` (the old direct edit helper) is gone.
+- `core/config.py` - removed an accidentally duplicated `new_project_config` definition
+  (the second one shadowed the first; identical behaviour).
+- `core/__init__.py` - `mapping_rules` documented and exported.
+- `mapping_tab.py` - `DEFAULT_CHOICE` now comes from `bulk_dialogs` (one definition).
+- `VERSION` / `pdf_ai_batch/__init__.py` - 0.7.0.
+
+### Fixed
+
+- A range action can never apply to a half-visible selection: every bulk handler
+  mirrors the thumbnail selection into the Treeview (the single source of truth) first.
+- `paste_mapping` reports the pages it could not write in the error message instead of
+  only the document range.
+
+### Known environment quirk (not a product bug)
+
+- On CPython 3.14 a `tkinter` variable collected by a **worker thread** can run
+  `Variable.__del__` outside the main loop (`RuntimeError: main thread is not in main
+  loop`), and a Tcl call from that thread may then invalidate Tk widgets. It is
+  reproducible on the accepted milestone 5 baseline too (the same pytest file selection
+  crashes at `dac46e8`) and it made the first milestone 6 acceptance runs die
+  mid-flight. The acceptance driver now keeps its dialog objects alive until the window
+  closes (`keep()`), which removes the trigger; the product code never creates Tk
+  objects on a worker thread.
+
+
+
 
 Milestone 5: **PDF preview + thumbnail page browser**. The MAPPING tab now shows the
 pages of the active PDF as thumbnails with one larger preview, the page size, the

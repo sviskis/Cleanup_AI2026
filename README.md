@@ -29,13 +29,22 @@ PDF page
 
 ## Status
 
-Version **0.6.0**. The Python pipeline, the JSX worker, the one page milestone, the
+Version **0.7.0**. The Python pipeline, the JSX worker, the one page milestone, the
 **persistent batch queue** (state.json, recovery, continue/retry, CLI), the
 **Tkinter GUI**, the **multi PDF project queue** (several PDFs per JOB, one plan
-and one set of states each, explicit RECONCILE) and the **visual page browser**
+and one set of states each, explicit RECONCILE), the **visual page browser**
 (thumbnails with their queue state, large preview, page info, PDF rendering with
-PyMuPDF on a worker thread) are implemented and verified with real Illustrator
+PyMuPDF on a worker thread) and **bulk mapping with reusable presets** (range
+assignment, numbered auto mapping, a mapping clipboard that works across PDFs,
+`JOB/CONFIG/presets/*.json`) are implemented and verified with real Illustrator
 runs. See `STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
+
+Mapping a 300 page magazine no longer means 300 clicks: the MAPPING tab assigns a
+template to a whole range (`6-35`), matches numbered templates against page numbers
+(`001_cover.ai` -> page 1), copies a mapping from one range to another (even into a
+different PDF of the same JOB) and applies a saved preset after showing which pages
+would change. Every mapping rule lives in `pdf_ai_batch/core/mapping_rules.py`; the
+GUI only collects input.
 
 One JOB can hold several PDFs; each has its own page plan, its own queue states and
 its own outputs (`manualis__001.ai`, `appendix__001.ai`). The order is `documents[]`
@@ -145,14 +154,14 @@ jsx/                          the only Illustrator side code
 
 pdf_ai_batch/                 Python orchestrator
   app.py  run_one.py  batch.py  paths.py  logging_setup.py
-  core/  project, pdf_info, naming, template_mapper, config, contract, pagejob,
-         state, queue, jsonio, validation
+  core/  project, pdf_info, naming, template_mapper, config, mapping_rules,
+         contract, pagejob, state, queue, jsonio, validation
   preview/  renderer (PyMuPDF page rendering), cache (JOB/.cache/preview)
   gui/   main_window, controller, tasks, project_tab, pdf_tab, mapping_tab,
-         preview_panel, preview_loader, run_tab
+         bulk_dialogs, preview_panel, preview_loader, run_tab
   adapters/illustrator.py     the ONLY COM code (pywin32)
-  tests/                      272 pytest tests (contract, encoding, state, queue,
-                               preview, GUI)
+  tests/                      338 pytest tests (contract, encoding, state, queue,
+                               mapping rules, preview, GUI)
 
 src/                          legacy ScriptUI application (phase 1, kept as baseline)
 legacy/current_working_v10.jsx frozen baseline (generated, hashed)
@@ -333,8 +342,14 @@ flow: `docs/ARCHITECTURE.md`. The reference script and its analysis:
   INTERRUPTED, resume, continue, retry errors, per page status, final batch summary)
   - see `docs/QUEUE_STATE.md`.
 * P2 - Tkinter GUI: PROJECT / PDF / MAPPING / RUN tabs with the mapping treeview,
-  driven by `core/queue.py` + `core/state.py`.
-* P2 - multi PDF queue in one run.
+  driven by `core/queue.py` + `core/state.py`. **Done** (milestone 3).
+* P2 - multi PDF queue in one run. **Done** (milestone 4).
+* P2 - visual page browser (thumbnails + large preview, PyMuPDF on a worker thread).
+  **Done** (milestone 5).
+* P2 - bulk mapping + reusable presets (ranges, numbered auto map, copy/paste
+  mapping, `JOB/CONFIG/presets/`). **Done** (milestone 6).
+* P2 - project preflight (`[PREFLIGHT PROJECT]`) and immutable job reports. Planned
+  (milestone 7), together with plan snapshots / undo (milestone 8).
 * P3 - SQLite history, ZIP handoff of `AI_OUT`, profiles ("conservative" /
   "aggressive" cleanup).
 

@@ -204,6 +204,37 @@ text == `state.json`), MASTER SHA256 unchanged, `Documents.Count == 0`.
 $env:PYTHONIOENCODING='utf-8'; .venv\Scripts\python.exe temp\run_gui_acceptance_m5.py
 ```
 
+## 0f. Bulk mapping + presets (milestone 6)
+
+The whole mapping decision layer is `pdf_ai_batch/core/mapping_rules.py`, so it is
+tested directly (no files, no display, no Illustrator) and again through the GUI
+controller:
+
+| Test file | What it proves |
+| --- | --- |
+| `tests/test_mapping_rules.py` (48) | range syntax (`1`, `2-5`, `1,3,5`, `1-5,8,10-14`, `*`, duplicates collapse, `5-3` normalized or rejected in strict mode) and every rejection (`0`, `-3`, `1--5`, `1.5`, `1-`, `a`, `1,,2`, empty, a page past the document, an oversized range); `format_pages` compression; bulk assignment / `use_default_template` / `clear_override` / `set_layer` / `set_enabled` incl. template extension and page validation and the untouched other document; numbered mapping (leading number, natural sort `1,2,10`, MASTER and `master*` excluded, ambiguous number reported and **not** applied, unnumbered and out-of-range reported, zero page count rejected); copy/paste (plan-data-only payload, within one PDF, source pages when no target is given, cross PDF with an offset, no write past the destination page count, unused targets when the clipboard runs out, `enabled` and `clear_layer` opt-in, "nothing fits" raises); presets (range compression `1 / 2-5 / 6-35 / 36 / 37-40`, round trip through a Latvian file name, schema validation of version/name/entries/unknown keys/`source`, **runtime keys rejected** - `state`, `attempts`, `run_id`, `error_type`, `output`, `job_id`, `stats`, apply overlay, `replace_all` reset, a preview that writes nothing, and an unreadable file listed instead of crashing) |
+| `tests/test_gui_bulk_mapping.py` (17) | the MAPPING actions through `AppController`: `parse_pages` with the document's page count, `assign_template_to_range` persisted in `config.json` and merged into the queue, the run history (ERROR + attempts) surviving a bulk edit, unknown page / bad extension rejected, `clear_pages` / `use_default_template`, positional `auto_assign_templates` still intact, `auto_map_by_template_number` (normal + ambiguity where the page keeps its manual override), copy/paste inside one PDF and across documents, paste beyond the document errors, paste without a clipboard errors, `save_preset` + `presets()` + `preset_preview` + `apply_preset` (`replace_all` variant, unknown preset errors, a larger preset applied to a smaller document with `skipped_pages`), the **mutation funnel counter** (8 plan mutations -> 8 `_before_mutation` calls, while `parse_pages`, `copy_mapping` and `save_preset` announce nothing) and the architecture guard: `controller.py` imports `core.mapping_rules`, has no regex range parser, no `json.dump` and exactly one `cfg.save_config` call |
+
+Real acceptance (one Illustrator run of 5 pages, ~3 minutes,
+`temp/run_gui_acceptance_m6.py`, evidence `temp/gui_acceptance_m6.txt`): the 16
+milestone 6 steps on a real 36 page JOB - the real `RangeAssignDialog` rejecting `0`
+and `99` with the core messages and accepting `2-5`, the range assignments, the
+`CLEAR OVERRIDE` range, COPY 2-5 -> PASTE 22-25, SAVE PRESET (6 range rules, no
+runtime key), AUTO MAP BY NUMBER (MASTER never used), reset all pages -> preset
+preview with the conflicts -> reapply (plan byte-identical), VALIDATE (30 checks, 0
+errors), 5 real pages processed, **every output proven against its template** (marker
+text + artboard read back with PyMuPDF: `COVER-TEMPLATE` 520x720, `INTRO-TEMPLATE`
+460x620 on page 2 *and* on the pasted page 22, MASTER 411x397, `SEP-TEMPLATE`
+460x520), MASTER SHA256 unchanged and `Illustrator atvērti dokumenti: 0`.
+
+Environment note (not a product bug): on CPython 3.14 a `tkinter` variable collected
+by a worker thread can run `Variable.__del__` outside the main loop and invalidate Tk
+widgets. Running a *subset* of the GUI test files can therefore abort with
+`Windows fatal exception` or an invalid widget name, at the accepted milestone 5
+baseline (`dac46e8`) as well. Always judge the suite with the project gate
+(`.venv\Scripts\python.exe -m pytest`), which passes; the acceptance driver keeps its
+dialog objects alive for the same reason.
+
 ## 1. Automated checks
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1

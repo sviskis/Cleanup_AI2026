@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.6.0
+Version: 0.7.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 5 done - the MAPPING tab is a visual page browser (thumbnails with their queue state, one large preview with FIT / 100% / + / -, page size, template/layer/output/state and the page actions); rendering is PyMuPDF on a background worker thread with a disposable `JOB/.cache/preview`; a real 20 step acceptance run (two PDFs, template assignment from the tiles, an ERROR page with its detail, retry, reopen) passed**
+Status: **Milestone 6 done - the MAPPING tab maps 100-300 page projects in bulk (ASSIGN TO RANGE, numbered auto mapping, COPY/PASTE MAPPING across documents, USE DEFAULT, CLEAR OVERRIDE, SAVE/APPLY PRESET with a conflict preview); every mapping rule lives in `core/mapping_rules.py`, every plan change goes through one mutation funnel, and a real 16 step acceptance run (36 page PDF, 5 pages processed in Illustrator, each output proven against its template) passed**
 
 ## Working
 
@@ -132,6 +132,42 @@ Status: **Milestone 5 done - the MAPPING tab is a visual page browser (thumbnail
   2.2 s, a fully cached pass takes 0.04 s and the cache is 0.2 MB for the whole
   document (`temp/preview_perf_m5.txt`).
 
+### Bulk mapping + reusable presets (milestone 6)
+
+* `core/mapping_rules.py` - **the only place that decides mapping**:
+  * `parse_pages` (`1`, `1-5`, `1,3,5`, `1-5,8,10-14`, `*`) with strict validation
+    (no `0`, no negatives, no decimals, no `1-`, no page beyond the document, no
+    oversized range) and `format_pages` for the reverse direction. The GUI has no
+    parser of its own.
+  * Bulk assignment (`assign_template` with an optional layer, `use_default_template`,
+    `clear_override`, `set_layer`, `set_enabled`) that only ever touches plan fields.
+  * `auto_map_by_number` - page N gets the template whose name starts with N
+    (`001_cover.ai`); natural sort, MASTER templates excluded, an ambiguous number is a
+    reported problem and those pages are left alone, a number beyond the page count is
+    informational. Deterministic - no fuzzy or AI matching anywhere.
+  * `copy_mapping` / `paste_mapping` - a clipboard with plan data only (template,
+    layer, enabled on request); works inside one PDF and across PDFs, never writes
+    beyond the destination page count and reports `skipped_pages`, `unused_pages`,
+    `truncated`.
+  * Presets (`JOB/CONFIG/presets/<name>.json`, schema version 1): the current mapping
+    compressed into ranges, saved/loaded/validated, with `preset_preview` (changes and
+    conflicts) and `apply_preset` (overlay or `replace_all`). Runtime fields are
+    rejected by the schema, so a preset is mapping intent only.
+* `gui/bulk_dialogs.py` - `RangeAssignDialog` (range + template + layer + enable, its
+  validation comes from `AppController.parse_pages`), `SavePresetDialog`,
+  `PresetDialog` (list, conflict preview, "also replace the other pages").
+* MAPPING action bar (three rows): SELECT ALL / NONE, ENABLE / DISABLE / RESET
+  SELECTED, VALIDATE, ASSIGN TO SELECTED, ASSIGN TO RANGE, USE DEFAULT,
+  CLEAR OVERRIDE, AUTO MAP BY NUMBER, REFRESH, COPY MAPPING, PASTE MAPPING,
+  SAVE PRESET, LOAD / APPLY PRESET, AUTO ASSIGN TEMPLATES, RECONCILE PDF.
+* One mutation funnel: `AppController._mutate_config` -> `_before_mutation` (the hook
+  milestone 8 will snapshot in) -> `validate_config` -> atomic `save_config` ->
+  `BatchQueue.build_queue`. `cfg.save_config` is called from exactly one place in the
+  GUI layer, and `_mapping_mutation` turns core `MappingError` / `PresetError` into
+  `ControllerError` for the widgets.
+* Details and the real evidence: `docs/GUI.md` §Bulk mapping and
+  `temp/gui_acceptance_m6.txt`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -158,6 +194,9 @@ Status: **Milestone 5 done - the MAPPING tab is a visual page browser (thumbnail
 | **GUI acceptance, visual page browser** (`temp/run_gui_acceptance_m5.py`, `temp/gui_acceptance_m5.txt`) | Thumbnails for `manualis.pdf` (3 pages, states printed on each tile) -> click 001 / 003: preview + page info (322 x 447 mm) follow, the mapping row follows too -> Ctrl+click 002+003 and `ASSIGN TEMPLATE TO SELECTED` -> `section_blue.ai` in `config.json` -> switch to `appendix.pdf` (its thumbnails) and back (cached, 0.33 s) -> RUN SELECTED x3: tiles `WAITING -> RUNNING -> DONE`, `state.json` identical -> locked output + RESET: tile `ERROR` with `OUTPUT_PREP_FAILED: ... WinError 32 ...` and attempts -> RETRY: `ERROR -> RUNNING -> DONE` -> close/reopen: tile text == `state.json`, config untouched -> MASTER SHA256 unchanged -> 0 Illustrator documents open. Screenshots: `temp/gui_m5_a_thumbnails.png`, `gui_m5_b_assigned.png`, `gui_m5_c_pdf_b.png`, `gui_m5_d_error.png`, `gui_m5_e_reopen.png` |
 | **Preview performance, 160 pages** (`temp/preview_perf.py`, `temp/preview_perf_m5.txt`) | open + queue 160 thumbnails = 1.3 ms with 0 synchronous renders -> first thumbnail after 0.03 s -> progressive (2 s: 152) -> all 160 + 1 preview in 2.2 s (14 ms each) -> cache 161 files / 0.2 MB -> fully cached pass 0.04 s (0.3 ms each) -> document switch mid-render: 131 pending requests dropped, 0 foreign pages delivered; a real photo PDF renders ~110 ms per thumbnail |
 | Adapter handshake (fake Illustrator) | stale result deleted, matching result accepted, mismatching result rejected + logged, late result picked up, timeout with log tail, COM error as `ERROR` result |
+| Bulk mapping, real GUI + Illustrator, 36 page JOB (`temp/run_gui_acceptance_m6.py`, `temp/gui_acceptance_m6.txt`) | PASS, 16 steps: range dialog rejects `0` and `99` with the core messages; ASSIGN 1 / 2-5 / 6-20 (USE DEFAULT) / 21 land in `config.json`; COPY 2-5 -> PASTE 22-25; SAVE PRESET -> 6 range rules (`1`, `2-5`, `6-20`, `21`, `22-25`, `26-36`); AUTO MAP BY NUMBER picks 1/2/21 and never MASTER; reset all pages -> preset preview ("Mainīsies 10 lapas", "Konfliktu nav") -> reapply restores the plan byte for byte; VALIDATE 30 checks / 0 errors; 5 real pages processed (DONE) and every output proven by its template: page 1 `COVER-TEMPLATE` 520x720, page 2 `INTRO-TEMPLATE` 460x620, page 6 MASTER 411x397, page 21 `SEP-TEMPLATE` 460x520, page 22 (pasted range) `INTRO-TEMPLATE` 460x620; MASTER SHA256 unchanged; Illustrator documents 0 |
+| Mapping rules (unit) | 48 tests: range syntax and its rejections, bulk assignment/enable/layer, numbered mapping (natural sort, MASTER excluded, ambiguity reported, unnumbered/out-of-range), copy/paste (cross PDF, page-count mismatch, offsets, enabled opt-in, no runtime fields), presets (schema, round trip, conflicts, replace_all, UTF-8 names) |
+| Mapping through the GUI controller | 17 tests: every MAPPING action through `AppController` into `config.json` + queue, run history survives a bulk edit, cross-document paste, preset preview/apply, mutation-funnel counter (8 mutations -> 8 hook calls) and a guard that the controller owns no mapping rule |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
 ## Partially working / not yet verified
@@ -199,13 +238,17 @@ Status: **Milestone 5 done - the MAPPING tab is a visual page browser (thumbnail
 
 ## Next milestone
 
-1. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
+1. Milestone 7 - production preflight (`core/preflight.py`, `[PREFLIGHT PROJECT]`)
+   and immutable job reports (`core/report.py` -> `JOB/LOG/reports/`).
+2. Milestone 8 - plan snapshots + undo (`JOB/CONFIG/history/`, `[UNDO PLAN CHANGE]`,
+   `[RESTORE SNAPSHOT]`); the hook already exists (`AppController._before_mutation`).
+3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
    real `.ait` template run (`template_mode = "saveas"`).
-2. "Stop after the current page" for the batch loop (now: close the window and
+4. "Stop after the current page" for the batch loop (now: close the window and
    `CONTINUE PROJECT`, or Ctrl+C plus `--continue`).
-3. Remember the last JOB (and its active document) between GUI sessions.
-4. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
-5. Optional: per document RECONCILE report in the log file, and a "RECONCILE ALL"
-   action for a JOB whose PDFs were all replaced.
-6. Optional preview extras: a thumbnail size preference, "CLEAR PREVIEW CACHE" in
-   the GUI, and a preview of the assigned template next to the page preview.
+5. Remember the last JOB (and its active document) between GUI sessions.
+6. Escape non-ASCII in the legacy `src/**/*.jsx` modules (GUI only, not the worker).
+7. Optional: a thumbnail size preference, "CLEAR PREVIEW CACHE" in the GUI, a preview
+   of the assigned template next to the page preview, per document RECONCILE report and
+   "RECONCILE ALL".
+

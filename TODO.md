@@ -41,6 +41,13 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
       and a real two PDF Illustrator acceptance (`temp/gui_acceptance_m4.txt`).
       See `docs/QUEUE_STATE.md` and `docs/GUI.md`.
 - [x] PDF preview + thumbnail page browser (milestone 5).
+- [x] Bulk page mapping + reusable presets (milestone 6): range parsing
+      (`1-5,8,10-14`, `*`), ASSIGN TO RANGE, numbered auto mapping (`001_cover.ai` ->
+      page 1, MASTER excluded, ambiguity reported), COPY/PASTE MAPPING within and
+      across PDFs, USE DEFAULT, CLEAR OVERRIDE, presets in `JOB/CONFIG/presets/` with a
+      conflict preview, and one mutation funnel for every plan change. All rules live
+      in `pdf_ai_batch/core/mapping_rules.py`; the GUI only collects input
+      (`gui/bulk_dialogs.py`). See `docs/GUI.md` §Bulk mapping.
       Done: `pdf_ai_batch/preview/` (PyMuPDF renderer + disposable
       `JOB/.cache/preview` keyed on pdf + mtime + size + page + render size),
       `gui/preview_loader.py` (one worker thread, priority queue, generations, event

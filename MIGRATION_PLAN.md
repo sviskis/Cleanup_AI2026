@@ -41,9 +41,10 @@ state with recovery, milestone-first order).
 | 10 | Batch policy: one bad page must not stop the batch, final summary | **DONE** for the policy + summary |
 | 11 | Multi PDF project queue: several PDFs per JOB, one plan and one set of states each | **DONE** (`docs/QUEUE_STATE.md` §4, `temp/gui_acceptance_m4.txt`) |
 | 12 | PDF preview + thumbnail page browser (PyMuPDF, background rendering, disposable cache) | **DONE** (`ARCHITECTURE.md` §3c, `docs/GUI.md`, `temp/gui_acceptance_m5.txt`) |
+| 12b | Bulk page mapping + reusable presets (`core/mapping_rules.py`, one mutation funnel) | **DONE** (`ARCHITECTURE.md` §7b, `docs/GUI.md` §Bulk mapping, `temp/gui_acceptance_m6.txt`) |
 | 13 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
 
-## 2. What exists now (v0.6.0)
+## 2. What exists now (v0.7.0)
 
 ```text
 jsx/cleanup.jsx      canonical Illustrator engine (cleanup + document helpers + stats contract)
@@ -54,6 +55,7 @@ pdf_ai_batch/
   app.py             entry point: no args -> GUI, --diagnose/--health/--run-one/--batch
   gui/               Tkinter GUI: main_window + project/pdf/mapping/run tabs +
                      preview_panel (thumbnails/preview) + preview_loader (renders),
+                     bulk_dialogs (range/preset dialogs),
                      controller (no Tk, no COM), tasks (worker thread + event queue),
                      context (what a tab may ask the window for)
   run_one.py         the milestone command: one page, one request, one result
@@ -64,6 +66,7 @@ pdf_ai_batch/
   core/naming.py     manual__017.ai naming, job ids, collision detection
   core/pdf_info.py   discovery, natural sort, page count (PyMuPDF -> pypdf)
   core/template_mapper.py  positional mapping, master exclusion, default fallback
+  core/mapping_rules.py    bulk mapping: ranges, numbered auto map, clipboard, presets
   core/project.py    JOB folders and paths
   core/config.py     config.json v2 (documents[]) + validation + atomic save + reconcile
   core/pagejob.py    one page plan + per document plan (drift/missing status, reconcile)

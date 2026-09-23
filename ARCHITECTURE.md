@@ -25,6 +25,8 @@ snapshot, and `archive/original/` holds the predecessors.
   |  core/contract.py        the JSON contract (request/result), stats mapping       |
   |  core/validation.py      preflight checks                                        |
   |  core/jsonio.py          atomic read/write, wait for a matching result           |
+  |  core/mapping_rules.py   bulk mapping: ranges, numbered auto map, clipboard,      |
+  |                          presets (the ONLY place that decides mapping)           |
   |  logging_setup.py        LOG/app.log + LOG/batch_<ts>.log, UTF-8 console         |
   +-------------------------------+--------------------------------------------------+
                                   |  writes runtime/current_job.json   (atomic rename)
@@ -276,7 +278,7 @@ MAPPING tab: [thumbnails | large preview] + page info + page actions
 JOB/
   PDF/       input PDFs (recursive scan, bookkeeping folders skipped)
   TEMPLATE/  MASTER_AI_TEMPLATE.ai (default) + page templates 001_cover.ai, ...
-  CONFIG/    config.json, state.json
+  CONFIG/    config.json, state.json, presets/<name>.json (mapping intent)
   AI_OUT/    results: manualis__003.ai
   LOG/       app.log (all sessions) + batch_<timestamp>.log (one per run)
   ERROR/     reserved (layout compatibility)
@@ -325,6 +327,32 @@ generic multi page PDF processing.
 3. Automatic mapping is positional: page 1 -> first page template, page 2 ->
    second, and so on.
 4. A page without its own template inherits `defaults.template`.
+
+## 7b. Bulk mapping and presets (milestone 6)
+
+`pdf_ai_batch/core/mapping_rules.py` is the **only** place that decides how pages are
+mapped in bulk. The GUI collects input and calls the controller; the controller calls
+this module. There is no range parsing, no numbered matching and no preset logic
+anywhere else (a test asserts the GUI module contains none of it).
+
+| Operation | Rule |
+| --- | --- |
+| `parse_pages` | `1`, `1-5`, `1,3,5`, `1-5,8,10-14`, `*` / `all` / `visas`; ascending, unique; rejects `0`, negatives, decimals, `1-`, unknown characters, pages beyond the document, ranges over 20 000 pages; `5-3` is normalized (strict mode: error) |
+| `assign_template` | plan fields only (`template`, optional `layer`); `template=None` = inherit `defaults.template` |
+| `clear_override` | page `template` back to `None` and `layer` back to `defaults.layer` |
+| `auto_map_by_number` | page N -> the template whose name starts with N (`^[^0-9]*(\d+)`); masters excluded; a number used by two templates is a `problem` and those pages are left untouched; unnumbered templates and numbers beyond the page count are reported, never guessed |
+| `copy_mapping` / `paste_mapping` | clipboard = `template` + `layer` (+ `enabled` when asked, + the document `clear_layer` when asked); queue state, attempts, run ids, errors and outputs never enter it; destination = explicit pages or source pages + `offset`; pages beyond the destination document are reported (`skipped_pages`), unused targets and truncated clipboards too; nothing fits -> error, no silent no-op |
+| presets | `JOB/CONFIG/presets/<name>.json`, schema version 1, entries are range strings (`{"pages": "6-20", "template": "...", "layer": "...", "enabled": true}`); `validate_preset` rejects unknown keys and every runtime key (`state`, `attempts`, `run_id`, `error_type`, `output`, `job_id`, `stats`, ...); `preset_preview` computes the changes and the conflicts (pages beyond the document, missing template files) before anything is replaced; `apply_preset` overlays, `replace_all=True` resets the pages the preset does not mention |
+
+Every plan change goes through `AppController._mutate_config`:
+
+    _plan_config()  ->  _before_mutation(reason)  ->  mutate(config)
+                    ->  validate_config()  ->  save_config() (atomic)  ->  build_queue()
+
+`_before_mutation` is the hook milestone 8 (snapshots / undo) fills in, and
+`cfg.save_config` is called from exactly one place in the GUI layer, so the GUI can
+never write `config.json` on its own.
+
 
 ## 8. Logging and errors
 

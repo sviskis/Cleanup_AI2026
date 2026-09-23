@@ -1,4 +1,4 @@
-# GUI (milestones 3-5) - Cleanup AI 2026
+# GUI (milestones 3-6) - Cleanup AI 2026
 
 `python app.py`  (or `python app.py --gui`, or `python -m pdf_ai_batch.gui`) opens the
 Tkinter window. Opening it **never** launches Illustrator: Illustrator is only
@@ -140,6 +140,51 @@ The MAPPING tab starts with a preview pane and then the table:
   the plan and `state.json` stay untouched - a rendering problem is never a
   processing problem.
 
+### Bulk mapping + presets (milestone 6)
+
+The MAPPING tab no longer needs a page by page click for a 100-300 page magazine. The
+action bar has three rows; the second and third are the bulk tools.
+
+| Button | What it does | Core call |
+| --- | --- | --- |
+| `ASSIGN TO SELECTED` | template (via the chooser) for the selected rows | `mapping_rules.assign_template` |
+| `ASSIGN TO RANGE` | dialog: **Lapas** (`1`, `1-5`, `1,3,5`, `1-5,8,10-14`, `*`), **Template** (or `(noklusētais)`), **Layer**, **Iespējot** (nemainīt / iespējot / izslēgt) | `parse_pages` + `assign_template` (+ `set_enabled`) |
+| `USE DEFAULT` | back to `defaults.template` (usually the MASTER) | `use_default_template` |
+| `CLEAR OVERRIDE` | back to the default template **and** the default layer | `clear_override` |
+| `AUTO MAP BY NUMBER` | page N <- the template numbered N (`001_cover.ai` -> page 1) | `auto_map_by_number` |
+| `COPY MAPPING` | copies template + layer of the selected pages | `copy_mapping` |
+| `PASTE MAPPING` | pastes onto the selected pages (or onto the same pages when nothing is selected) | `paste_mapping` |
+| `SAVE PRESET` | asks for a name and writes `JOB/CONFIG/presets/<name>.json` | `preset_from_mapping` + `save_preset` |
+| `LOAD / APPLY PRESET` | lists the presets, shows the **core preview** (pages that would change, conflicts) and applies it | `preset_preview` + `apply_preset` |
+| `AUTO ASSIGN TEMPLATES` | the old positional mapping (natural order, MASTER excluded) | `template_mapper.build_page_plan` |
+| `RECONCILE PDF` | after the PDF page count changed (CONFIG STALE) | `core/queue.reconcile_document` |
+
+Rules that come straight from the core:
+
+* **The range dialog validates with the core parser** and shows its Latvian message
+  inline (`Lapas numurs sākas no 1: '0'`, `Lapas ārpus dokumenta (1-36): 99`); the GUI
+  has no parser of its own.
+* **Numbered mapping never guesses.** MASTER templates are excluded; a number used by
+  two templates is reported (`Neskaidri numuri: Numurs 2 ir vairākiem template: ...`)
+  and those pages keep whatever they had.
+* **The clipboard is plan data only** - no queue state, no attempts, no run ids, no
+  errors, no outputs. It works across documents (copy from `manualis.pdf`, paste into
+  `appendix.pdf`, with an offset if needed) and never writes past the last page; it
+  reports what it skipped instead (`izlaistas`, `neizmantotas`, `bez vietas`).
+* **A preset is mapping intent.** Entries are ranges
+  (`{"pages": "6-20", "template": "MASTER_AI_TEMPLATE.ai", "layer": "ARTWORK"}`), the
+  schema version is 1 and runtime keys are rejected, so a preset can never carry state.
+  Applying one shows the conflicts first (pages beyond the document, missing template
+  files) and only writes the pages the document really has; "Aizstāt arī pārējās lapas"
+  is the destructive variant that also resets the pages the preset does not mention.
+* **Bulk changes are reversible in milestone 8, not by hand**: every plan change goes
+  through one funnel (`_mutate_config` -> `_before_mutation` -> validate -> atomic save
+  -> queue rebuild), which is where the snapshot/undo feature will hook in.
+
+Layout note: the mapping table keeps the selection as the single source of truth, so a
+thumbnail click, a range action and the preview buttons all act on the same rows. While
+a batch runs, all bulk buttons are disabled (`set_busy`).
+
 ## Overwrite
 
 `RESET SELECTED` sets a page back to `WAITING`, but an existing `AI_OUT/...ai` would
@@ -182,6 +227,31 @@ image/AI analysis, no content based template choice** - the preview shows pages,
 never interprets them.
 
 ## Acceptance evidence (real Illustrator, 2026-09-23)
+
+### Milestone 6 - bulk mapping, presets and a 36 page project
+
+Script `temp/run_gui_acceptance_m6.py`, evidence `temp/gui_acceptance_m6.txt`,
+screenshots `temp/gui_m6_a_assigned.png`, `gui_m6_b_preset.png`, `gui_m6_c_outputs.png`.
+JOB: `temp/BULK_JOB` - `magazine.pdf` (36 pages) with `001_cover.ai`, `002_intro.ai`,
+`021_separator.ai` and the real MASTER. **PASS (16 steps)**:
+
+| Step | Evidence |
+| --- | --- |
+| range dialog (real `RangeAssignDialog`) | `'0'` -> `Lapas numurs sākas no 1: '0'`, `'99'` -> `Lapas ārpus dokumenta (1-36): 99`, `'2-5'` -> `pages=[2, 3, 4, 5] template=002_intro.ai` |
+| ASSIGN TO RANGE | page 1 -> `001_cover.ai`; 2-5 -> `002_intro.ai` x4; `CLEAR OVERRIDE` 6-20 -> all `(noklusētais)`; page 21 -> `021_separator.ai`, layer `SEPARATOR` |
+| COPY / PASTE MAPPING | `4 lapas no magazine.pdf (2-5) | 002_intro.ai` -> pasted onto 22-25, source range untouched |
+| SAVE PRESET | 6 rules: `1`, `2-5`, `6-20`, `21`, `22-25`, `26-36` - no runtime key in the file |
+| AUTO MAP BY NUMBER | 1 -> `001_cover.ai`, 2 -> `002_intro.ai`, 21 -> `021_separator.ai`, `MASTER nav izmantots=True` |
+| reset + APPLY PRESET | all 36 pages reset to the default, preset preview `Mainīsies 10 lapas (pirmās: 1, 2, 3, 4, 5, 21, 22, 23, 24, 25)` / `Konfliktu nav.`, then `plāns atjaunots identiski: True` |
+| VALIDATE | 30 checks, 0 errors |
+| 5 real pages | `RUN SELECTED [1, 2, 6, 21, 22]` -> all `DONE` |
+| which template produced which output | page 1 `001_cover.ai` 520x720 `COVER-TEMPLATE SOURCE PAGE 1`; page 2 `002_intro.ai` 460x620 `INTRO-TEMPLATE SOURCE PAGE 2`; page 6 `MASTER_AI_TEMPLATE.ai` 411x397 `SOURCE PAGE 6`; page 21 `021_separator.ai` 460x520 `SEP-TEMPLATE SOURCE PAGE 21`; page 22 (the **pasted** range) `002_intro.ai` 460x620 `INTRO-TEMPLATE SOURCE PAGE 22` |
+| safety | MASTER template SHA256 unchanged, `state.json` untouched by the mapping work, `Illustrator atvērti dokumenti: 0` |
+
+The output proof works because the templates are PDF compatible `.ai` files whose
+marker text and artboard survive the worker: PyMuPDF can read the marker of the
+finished output, so "page 22 used the INTRO template because it was pasted there" is
+verified from the product, not from the plan.
 
 ### Milestone 5 - the visual page browser
 
@@ -274,6 +344,9 @@ start and shows "Template 003_pagina.ai: nav atrasts" instead.
 | (M5) The large preview was re-requested on every refresh | each progress event (and every zoom refresh) re-rendered the preview pane and the zoom label showed the renderer's fit scale (`60%` instead of `fit`) | the request is keyed on `(page, long_side, zoom)`, and `_zoom` only ever holds the operator's choice |
 | (M5) Tiles never showed `RUNNING` | a progress event only arrives after a page finished, so a thumbnail jumped `WAITING -> DONE` | `MainWindow._maybe_refresh_live_states()` re-reads the rows while a batch runs (0.5 s), found by the real acceptance run |
 
+| (M6) `_handle` swallowed the core report | the ambiguity problems of `AUTO MAP BY NUMBER` were invisible (the handler could not read the report) | `MappingTab._handle` returns the action's result, so the numbered mapping reports its problems |
+| (M6, not a product bug) A milestone 6 acceptance run died mid-flight with `invalid command name` / `application has been destroyed` | on CPython 3.14 a `tkinter` variable collected by the render worker runs `Variable.__del__` outside the main loop (`RuntimeError: main thread is not in main loop`), and that Tcl call can invalidate Tk widgets; the same failure class makes a subset of the pytest GUI files crash at the milestone 5 baseline `dac46e8` too | the acceptance driver keeps its dialog objects alive until the window closes (`keep()`); the product code never creates Tk objects on a worker thread, so nothing changed there |
+
 ### Screenshots
 
 `temp/grab_gui.py [mapping|run|project|pdf]` captures a tab with `PrintWindow`
@@ -290,4 +363,10 @@ start and shows "Template 003_pagina.ai: nav atrasts" instead.
   OPEN JOB FOLDER, and the PDF/template counters.
 * `temp/gui_pdf.png` - PDF: the JOB/PDF list, `mans_fails.pdf` selected, page count
   `14`, method `PyMuPDF`, size `35.7 MB (37464514 B)` and the config status line.
+* `temp/gui_m6_a_assigned.png` - MAPPING after the range assignments, the copy/paste and
+  the three bulk button rows (36 page plan).
+* `temp/gui_m6_b_preset.png` - MAPPING after the preset was reapplied (cover 1, intro
+  2-5 and 22-25, MASTER 6-20, separator 21).
+* `temp/gui_m6_c_outputs.png` - MAPPING after the run: the five processed pages `DONE`.
+
 

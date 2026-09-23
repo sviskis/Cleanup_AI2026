@@ -3,6 +3,12 @@
 The table is the operator's plan view. Everything it can change goes through
 `AppController` into `config.json` (the plan source of truth) and is then merged
 into `state.json` by the core queue - the GUI never writes state itself.
+
+Milestone 6 added the bulk actions: ASSIGN TO SELECTED / ASSIGN TO RANGE /
+USE DEFAULT / CLEAR OVERRIDE / AUTO MAP BY NUMBER / COPY MAPPING / PASTE MAPPING /
+SAVE PRESET / LOAD-APPLY PRESET. The tab itself only collects input (`bulk_dialogs`)
+and calls the controller; the range parser, the numbered mapping and the preset
+schema all live in `core/mapping_rules.py`.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from ..core import state
+from .bulk_dialogs import DEFAULT_CHOICE, PresetDialog, RangeAssignDialog, SavePresetDialog
 from .controller import ControllerError, MappingRow
 from .context import GuiContext
 from .preview_panel import PreviewPanel
@@ -25,7 +32,6 @@ STATE_COLOURS = {
     state.RUNNING: "#0b5cad",
     state.WAITING: "#111111",
 }
-DEFAULT_CHOICE = "<noklusētais template>"
 
 
 class TemplateChooser(tk.Toplevel):
@@ -125,6 +131,10 @@ class MappingTab(ttk.Frame):
 
     #: replaced by tests so the chooser can be answered without a user
     chooser_factory: type[TemplateChooser] = TemplateChooser
+    #: the dialogs of the bulk actions (milestone 6), same seam idea
+    range_dialog_factory: type[RangeAssignDialog] = RangeAssignDialog
+    save_preset_dialog_factory: type[SavePresetDialog] = SavePresetDialog
+    preset_dialog_factory: type[PresetDialog] = PresetDialog
 
     def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
         super().__init__(parent, padding=8)
@@ -158,11 +168,18 @@ class MappingTab(ttk.Frame):
             ("DISABLE SELECTED", self.on_disable, 0, 3),
             ("RESET SELECTED", self.on_reset, 0, 4),
             ("VALIDATE", self.on_validate, 0, 5),
-            ("AUTO ASSIGN TEMPLATES", self.on_auto_assign, 1, 0),
-            ("ASSIGN TEMPLATE", self.on_assign_template, 1, 1),
-            ("USE DEFAULT TEMPLATE", self.on_use_default, 1, 2),
-            ("REFRESH", self.on_refresh, 1, 3),
-            ("RECONCILE PDF", self.on_reconcile, 1, 4),
+            ("ASSIGN TO SELECTED", self.on_assign_template, 1, 0),
+            ("ASSIGN TO RANGE", self.on_assign_range, 1, 1),
+            ("USE DEFAULT", self.on_use_default, 1, 2),
+            ("CLEAR OVERRIDE", self.on_clear_override, 1, 3),
+            ("AUTO MAP BY NUMBER", self.on_auto_map_number, 1, 4),
+            ("REFRESH", self.on_refresh, 1, 5),
+            ("COPY MAPPING", self.on_copy_mapping, 2, 0),
+            ("PASTE MAPPING", self.on_paste_mapping, 2, 1),
+            ("SAVE PRESET", self.on_save_preset, 2, 2),
+            ("LOAD / APPLY PRESET", self.on_apply_preset, 2, 3),
+            ("AUTO ASSIGN TEMPLATES", self.on_auto_assign, 2, 4),
+            ("RECONCILE PDF", self.on_reconcile, 2, 5),
         )
         for label, handler, row, column in actions:
             button = ttk.Button(bar, text=label, command=handler)
@@ -236,14 +253,26 @@ class MappingTab(ttk.Frame):
         self.report.insert("1.0", text)
         self.report.configure(state="disabled")
 
-    def _handle(self, action, success: str) -> None:
+    def _handle(self, action, success: str):
+        """Run a controller action; report the result or the ControllerError.
+
+        Returns whatever the action returned, so a caller can use the report of a bulk
+        operation (for example the problems of the numbered auto mapping).
+        """
         try:
-            action()
+            result = action()
         except ControllerError as exc:
             self.ctx.report(str(exc), error=True)
-            return
+            return None
         self.ctx.report(success)
         self.ctx.refresh()
+        return result
+
+    @staticmethod
+    def _wait(dialog) -> None:
+        """Wait for a modal dialog (a fake dialog object is never waited for)."""
+        if isinstance(dialog, tk.Widget):
+            dialog.wait_window()
 
     # ------------------------------------------------------------------ actions
 
@@ -292,6 +321,133 @@ class MappingTab(ttk.Frame):
             lambda: self.ctx.controller.use_default_template(pages),
             f"Noklusētais template lapām {pages}",
         )
+
+    # ----------------------------------------------------------- bulk mapping (M6)
+
+    def on_assign_range(self) -> None:
+        """ASSIGN TO RANGE: pages text + template (+ layer / enable) in one dialog."""
+        try:
+            page_count = self.ctx.controller.active_document().page_count
+        except (ControllerError, AttributeError):
+            page_count = 0
+        dialog = self.range_dialog_factory(
+            self.ctx.window,
+            page_count=page_count,
+            choices=self.ctx.controller.template_choices(),
+            parse=self.ctx.controller.parse_pages,
+            current_template=self._rows[0].template if self._rows else "",
+            current_layer=self._rows[0].layer if self._rows else "ARTWORK",
+            on_browse=self.ctx.controller.add_templates,
+        )
+        self._wait(dialog)
+        answer = getattr(dialog, "result", None)
+        if not answer:
+            return
+        pages = answer["pages"]
+        self._handle(
+            lambda: self.ctx.controller.assign_template_to_range(
+                pages, answer["template"], layer=answer["layer"]
+            ),
+            f"Template {answer['template'] or '(noklusētais)'} lapām {self.ctx.controller.format_pages(pages)}",
+        )
+        if answer.get("enabled") is not None:
+            self._handle(
+                lambda: self.ctx.controller.set_enabled(pages, answer["enabled"]),
+                f"Lapas {self.ctx.controller.format_pages(pages)}: "
+                f"{'iespējotas' if answer['enabled'] else 'izslēgtas'}",
+            )
+
+    def on_clear_override(self) -> None:
+        pages = self.selected_pages()
+        if not pages:
+            self.ctx.report("Nav atlasīta neviena lapa", error=True)
+            return
+        self._handle(
+            lambda: self.ctx.controller.clear_pages(pages),
+            f"Notīrīti pārraksti lapām {self.ctx.controller.format_pages(pages)}",
+        )
+
+    def on_auto_map_number(self) -> None:
+        """AUTO MAP BY TEMPLATE NUMBER: page N <- the template numbered N."""
+        report = self._handle(
+            self.ctx.controller.auto_map_by_template_number,
+            "Numerētā piešķire veikta (MASTER neietilpst, neskaidri numuri netiek minēti)",
+        )
+        if report and report.get("problems"):
+            self.ctx.report("Neskaidri numuri: " + " | ".join(report["problems"]), error=True)
+
+    def on_copy_mapping(self) -> None:
+        pages = self.selected_pages()
+        if not pages:
+            self.ctx.report("Nav atlasīta neviena lapa", error=True)
+            return
+        try:
+            clipboard = self.ctx.controller.copy_mapping(pages)
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report(f"Nokopēts: {clipboard.summary()}")
+
+    def on_paste_mapping(self) -> None:
+        pages = self.selected_pages()
+        try:
+            report = self.ctx.controller.paste_mapping(pages or None)
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report(
+            f"Ielīmēts {report['pdf']} lapās {self.ctx.controller.format_pages(report['pasted_pages'])}"
+            + (f" | izlaistas {report['skipped_pages']}" if report["skipped_pages"] else "")
+            + (f" | neizmantotas {report['unused_pages']}" if report["unused_pages"] else "")
+            + (f" | bez vietas {report['truncated']}" if report["truncated"] else "")
+        )
+        self.ctx.refresh()
+
+    def on_save_preset(self) -> None:
+        pdf = self.ctx.controller.active_pdf
+        default_name = f"{pdf.stem if pdf else 'job'}_mapping"
+        dialog = self.save_preset_dialog_factory(self.ctx.window, default_name=default_name)
+        self._wait(dialog)
+        name = getattr(dialog, "result", None)
+        if not name:
+            return
+        self._handle(
+            lambda: self.ctx.controller.save_preset(name),
+            f"Preset saglabāts: {name}.json (JOB/CONFIG/presets)",
+        )
+
+    def on_apply_preset(self) -> None:
+        """LOAD / APPLY PRESET: pick, read the conflict preview, then apply."""
+        try:
+            presets = self.ctx.controller.presets()
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        if not presets:
+            self.ctx.report("Nav neviena preseta (JOB/CONFIG/presets)", error=True)
+            return
+        dialog = self.preset_dialog_factory(
+            self.ctx.window,
+            presets=presets,
+            preview=self.ctx.controller.preset_preview,
+        )
+        self._wait(dialog)
+        answer = getattr(dialog, "result", None)
+        if not answer:
+            return
+        try:
+            report = self.ctx.controller.apply_preset(
+                answer["name"], replace_all=bool(answer.get("replace_all"))
+            )
+        except ControllerError as exc:
+            self.ctx.report(str(exc), error=True)
+            return
+        self.ctx.report(
+            f"Preset {report['name']}: mainītas {len(report['changed'])} lapas"
+            + (f", atiestatītas {len(report['reset'])}" if report["reset"] else "")
+            + (f", ārpus dokumenta {report['skipped_pages']}" if report["skipped_pages"] else "")
+        )
+        self.ctx.refresh()
 
     def on_reset(self) -> None:
         job_ids = self.selected_job_ids()
@@ -343,8 +499,7 @@ class MappingTab(ttk.Frame):
             default_name=self.ctx.controller.default_template_name(),
             on_browse=lambda paths: self.ctx.controller.add_templates(paths)[0],
         )
-        if isinstance(dialog, tk.Widget):
-            self.wait_window(dialog)
+        self._wait(dialog)
         return getattr(dialog, "result", None)
 
     def _show_document(self) -> None:

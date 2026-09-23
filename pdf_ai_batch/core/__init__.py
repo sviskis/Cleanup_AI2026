@@ -7,6 +7,8 @@ Modules
     template_mapper  template discovery, natural sort, page -> template mapping
     project          the JOB folder model and its paths
     config           config.json read/validate/write
+    mapping_rules    bulk mapping: ranges, bulk assign, numbered auto map,
+                     copy/paste, presets (the only place that decides mapping)
     contract         the Python <-> JSX request/result contract
     pagejob          page -> template/output/layer/mode plan (shared by run_one and
                      the queue) plus the DONE rule (output_ready)
@@ -25,6 +27,7 @@ __all__ = [
     "template_mapper",
     "project",
     "config",
+    "mapping_rules",
     "contract",
     "pagejob",
     "state",

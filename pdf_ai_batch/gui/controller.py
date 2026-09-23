@@ -4,22 +4,28 @@ The GUI is a thin presentation layer, so every action a button performs lives he
 as a plain method that can be unit tested without a display:
 
     PROJECT tab  new_project / open_project / project_folders / add_pdf / add_templates
-    PDF tab      list_pdfs / select_pdf / pdf_entry
-    MAPPING tab  mapping_rows / set_enabled / assign_template / use_default_template /
-                 auto_assign_templates / reset_pages / validate / template_choices
+    PDF tab      list_pdfs / select_pdf / pdf_entry / set_document_enabled / reconcile
+    MAPPING tab  mapping_rows / set_enabled / assign_template / assign_template_to_range /
+                 use_default_template / clear_pages / parse_pages /
+                 auto_assign_templates / auto_map_by_template_number /
+                 copy_mapping / paste_mapping / save_preset / presets / preset_preview /
+                 apply_preset / reset_pages / validate / template_choices
     RUN tab      run_selected / run_all_enabled / continue_queue / retry_errors /
                  retry_interrupted / progress / queue_summary / has_running_items
 
 Everything below it is the proven core: `core/project.py` (folders),
 `core/pdf_info.py` (page count), `core/template_mapper.py` (natural sort, master
-exclusion), `core/naming.py` (output names), `core/config.py` (config.json),
-`core/validation.py` (preflight), `core/pagejob.py` (the page plan),
+exclusion), `core/mapping_rules.py` (ranges, bulk mapping, numbered auto map,
+copy/paste, presets), `core/naming.py` (output names), `core/config.py`
+(config.json), `core/validation.py` (preflight), `core/pagejob.py` (the page plan),
 `core/queue.py` + `core/state.py` (queue, transitions), and - only for an explicit
 health check or a run - `adapters/illustrator.py`.
 
 Plan edits go to `CONFIG/config.json` (the plan source of truth) and are then
 merged into `state.json` by `BatchQueue.build_queue`, which preserves the run
-history. The GUI never edits state.json itself.
+history. The GUI never edits state.json itself. Every plan change goes through
+`_mutate_config` -> `_before_mutation` (the hook milestone 8 snapshots in) ->
+validate -> atomic save -> queue rebuild.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ from typing import Callable, Iterable, Sequence
 from .. import paths
 from ..adapters.illustrator import IllustratorAdapter
 from ..core import config as cfg
-from ..core import pagejob, state, validation
+from ..core import mapping_rules, pagejob, state, validation
 from ..core.pdf_info import PdfPageCountError, count_pages
 from ..core.project import JobProject, ProjectError
 from ..core.queue import BatchQueue, BatchSummary, QueueError
@@ -260,6 +266,8 @@ class AppController:
         self._illustrator_state: bool | None = None
         self._last_checks: list[validation.CheckResult] = []
         self._preview_cache: PreviewCache | None = None
+        #: COPY MAPPING -> PASTE MAPPING (plan data only, never queue state)
+        self._mapping_clipboard: mapping_rules.MappingClipboard | None = None
 
     # ------------------------------------------------------------------ project
 
@@ -319,16 +327,22 @@ class AppController:
         """
         project = self._require_project()
         name = Path(str(pdf)).name
-        config = cfg.load_config(project.config_path)
-        document = cfg.document_for(config, name)
-        if document is None:
-            document = cfg.new_document(name, 1, [], enabled=bool(enabled))
-        else:
-            document = dict(document)
-            document["enabled"] = bool(enabled)
-        cfg.save_config(project.config_path, cfg.replace_document(config, document))
+
+        def mutate(config: dict) -> None:
+            document = cfg.document_for(config, name)
+            if document is None:
+                document = cfg.new_document(name, 1, [], enabled=bool(enabled))
+            else:
+                document = dict(document)
+                document["enabled"] = bool(enabled)
+            updated = cfg.replace_document(config, document)
+            config.clear()
+            config.update(updated)
+
+        self._mutate_config(
+            f"dokumenta {'ieslēgšana' if enabled else 'izslēgšana'}: {name}", mutate
+        )
         self.log.info("%s dokumentu %s", "Ieslēdzu" if enabled else "Izslēdzu", name)
-        self._rebuild_queue()
         return self.documents()
 
     def reconcile_document(self, pdf: str | Path | None = None) -> dict:
@@ -341,6 +355,7 @@ class AppController:
         target = Path(str(pdf)).name if pdf else (self._active_pdf.name if self._active_pdf else None)
         if not target:
             raise ControllerError("Nav izvēlēts PDF")
+        self._before_mutation(f"RECONCILE {target}")
         try:
             report = self.queue.reconcile_document(target)
         except (ProjectError, PdfPageCountError, OSError) as exc:
@@ -726,46 +741,273 @@ class AppController:
 
     def set_enabled(self, pages: Iterable[int], enabled: bool) -> list[MappingRow]:
         """USE column of the MAPPING table (persisted in config.json)."""
-        self._set_pages(pages, {"enabled": bool(enabled)})
+        document = self._require_pdf().name
+        wanted = list(pages)
+        self._mapping_mutation(
+            f"{'iespējoju' if enabled else 'izslēdzu'} lapas",
+            lambda config: mapping_rules.set_enabled(config, document, wanted, enabled),
+        )
         return self.mapping_rows()
 
     def assign_template(self, pages: Iterable[int], template: str | None) -> list[MappingRow]:
         """Set the per page template assignment without editing JSON by hand."""
-        value = (template or "").strip() or None
-        self._set_pages(pages, {"template": value})
+        self.assign_template_to_range(pages, template)
         return self.mapping_rows()
 
     def use_default_template(self, pages: Iterable[int]) -> list[MappingRow]:
         """Back to the default template (entry template None -> defaults.template)."""
         return self.assign_template(pages, None)
 
+    # ---------------------------------------------------------- bulk mapping (M6)
+
+    def parse_pages(self, text: str) -> list[int]:
+        """Range parser of the core: 1 / 1-5 / 1,3,5 / 1-5,8,10-14 / *.
+
+        The GUI never parses ranges itself (`core/mapping_rules.parse_pages` is the
+        only parser); it only shows the error message when the text is not usable.
+        """
+        row = self.active_document()
+        page_count = int(row.page_count) if row is not None and row.page_count else None
+        try:
+            return mapping_rules.parse_pages(text, page_count=page_count)
+        except mapping_rules.RangeParseError as exc:
+            raise ControllerError(str(exc)) from exc
+
+    def format_pages(self, pages: Iterable[int]) -> str:
+        """Range text of a selection (used by the dialogs and the status line)."""
+        return mapping_rules.format_pages(pages)
+
+    def assign_template_to_range(
+        self,
+        pages: Iterable[int],
+        template: str | None,
+        *,
+        layer: str | None = None,
+    ) -> dict:
+        """ASSIGN TO RANGE: template (and optionally layer) for a list of pages."""
+        document = self._require_pdf().name
+        wanted = list(pages)
+        report = self._mapping_mutation(
+            f"template piešķire ({mapping_rules.format_pages(wanted)})",
+            lambda config: mapping_rules.assign_template(
+                config, document, wanted, template, layer=layer
+            ),
+        )
+        self.log.info(
+            "Template %s lapām %s dokumentā %s",
+            template or "(noklusētais)",
+            mapping_rules.format_pages(wanted),
+            document,
+        )
+        return report
+
+    def clear_pages(self, pages: Iterable[int]) -> dict:
+        """CLEAR OVERRIDE: page template and layer go back to the document defaults."""
+        document = self._require_pdf().name
+        wanted = list(pages)
+        return self._mapping_mutation(
+            f"notīru pārrakstus ({mapping_rules.format_pages(wanted)})",
+            lambda config: mapping_rules.clear_override(config, document, wanted),
+        )
+
+    def auto_map_by_template_number(self) -> dict:
+        """AUTO MAP BY TEMPLATE NUMBER: page N -> the template numbered N.
+
+        Deterministic only: `core/mapping_rules.auto_map_by_number` excludes MASTER
+        templates and reports an ambiguous number instead of guessing.
+        """
+        project = self._require_project()
+        pdf = self._require_pdf()
+        row = self.active_document()
+        page_count = int(row.page_count) if row is not None and row.page_count else 0
+        if not page_count:
+            page_count, _method = count_pages(pdf)
+        report = self._mapping_mutation(
+            "numerētā automātiskā piešķire",
+            lambda config: mapping_rules.auto_map_by_number(
+                config, pdf.name, page_count=page_count, template_dir=project.template_dir
+            ),
+        )
+        self.log.info(
+            "Numerētā piešķire: %s lapas, neskaidri %s, nenumurēti %s",
+            report["assigned_count"],
+            list(report["ambiguous"]) or "-",
+            report["unnumbered"] or "-",
+        )
+        return report
+
+
     def auto_assign_templates(self) -> list[MappingRow]:
         """Positional auto mapping again (natural sort, MASTER excluded)."""
         project = self._require_project()
         pdf = self._require_pdf()
         page_count, _method = count_pages(pdf)
-        planned, defaults, _fallback = build_page_plan(pdf, page_count, project.template_dir)
 
-        previous = cfg.load_config(project.config_path)
-        by_page = {
-            int(entry.get("page", 0)): entry
-            for entry in cfg.page_entries(previous, pdf.name)
-        }
-        for entry in planned:
-            old = by_page.get(int(entry["page"]))
-            if not old:
-                continue
-            entry["layer"] = old.get("layer") or entry["layer"]
-            entry["enabled"] = bool(old.get("enabled", True))
-            entry["output"] = old.get("output") or entry["output"]
+        def mutate(config: dict) -> int:
+            planned, defaults, _fallback = build_page_plan(pdf, page_count, project.template_dir)
+            by_page = {
+                int(entry.get("page", 0)): entry
+                for entry in cfg.page_entries(config, pdf.name)
+            }
+            for entry in planned:
+                old = by_page.get(int(entry["page"]))
+                if not old:
+                    continue
+                entry["layer"] = old.get("layer") or entry["layer"]
+                entry["enabled"] = bool(old.get("enabled", True))
+                entry["output"] = old.get("output") or entry["output"]
 
-        defaults = dict(defaults)
-        if (previous.get("defaults") or {}).get("template"):
-            defaults["template"] = previous["defaults"]["template"]
-        document = cfg.new_document(pdf.name, page_count, planned)
-        self._write_config(cfg.replace_document(previous, document))
-        self.log.info("Automātiskā template piešķire: %s lapas", page_count)
+            merged = dict(defaults)
+            if (config.get("defaults") or {}).get("template"):
+                merged["template"] = config["defaults"]["template"]
+            document = cfg.new_document(pdf.name, page_count, planned)
+            updated = cfg.replace_document(config, document)
+            updated["defaults"] = cfg.normalize_defaults(merged)
+            config.clear()
+            config.update(updated)
+            return page_count
+
+        assigned = self._mutate_config("automātiskā template piešķire", mutate)
+        self.log.info("Automātiskā template piešķire: %s lapas", assigned)
         return self.mapping_rows()
+
+    # -------------------------------------------------------- clipboard + presets
+
+    def copy_mapping(
+        self, pages: Iterable[int], *, include_enabled: bool = False
+    ) -> mapping_rules.MappingClipboard:
+        """COPY MAPPING: template + layer of the given pages (state is never copied)."""
+        pdf = self._require_pdf()
+        config = self._ensure_config()
+        try:
+            clipboard = mapping_rules.copy_mapping(
+                config, pdf.name, list(pages), include_enabled=include_enabled
+            )
+        except mapping_rules.MappingError as exc:
+            raise ControllerError(str(exc)) from exc
+        self._mapping_clipboard = clipboard
+        self.log.info("Nokopēju mapping: %s", clipboard.summary())
+        return clipboard
+
+    @property
+    def mapping_clipboard(self) -> mapping_rules.MappingClipboard | None:
+        """What COPY MAPPING holds right now (None = nothing copied yet)."""
+        return self._mapping_clipboard
+
+    def paste_mapping(
+        self,
+        pages: Iterable[int] | None = None,
+        *,
+        include_enabled: bool = False,
+        include_document_defaults: bool = False,
+    ) -> dict:
+        """PASTE MAPPING into the active document (selected pages, or the same pages)."""
+        clipboard = self._mapping_clipboard
+        if clipboard is None or not clipboard.count:
+            raise ControllerError("Nav nokopēta neviena mapping (vispirms COPY MAPPING)")
+        pdf = self._require_pdf()
+        wanted = list(pages) if pages else None
+        report = self._mapping_mutation(
+            f"mapping ielīmēšana ({clipboard.source_pdf} -> {pdf.name})",
+            lambda config: mapping_rules.paste_mapping(
+                config,
+                pdf.name,
+                clipboard,
+                pages=wanted,
+                include_enabled=include_enabled,
+                include_document_defaults=include_document_defaults,
+            ),
+        )
+        self.log.info(
+            "Ielīmēju mapping: %s lapas (%s izlaistas, %s neizmantotas, %s bez vietas)",
+            report["pasted_pages"] or "-",
+            report["skipped_pages"] or "-",
+            report["unused_pages"] or "-",
+            report["truncated"] or 0,
+        )
+        return report
+
+    # ------------------------------------------------------------------- presets
+
+    @property
+    def presets_dir(self) -> Path:
+        """`JOB/CONFIG/presets` - the reusable mapping intent of this JOB."""
+        return mapping_rules.presets_dir(self._require_project().config_dir)
+
+    def presets(self) -> list[mapping_rules.PresetInfo]:
+        """Every preset of the JOB (an invalid file is listed, never fatal)."""
+        return mapping_rules.list_presets(self.presets_dir)
+
+    def preset_info(self, name: str) -> mapping_rules.PresetInfo | None:
+        """One preset, found by file name or by preset name."""
+        wanted = str(name or "").strip().lower()
+        for info in self.presets():
+            if info.path.name.lower() == wanted or info.path.stem.lower() == wanted:
+                return info
+            if info.name.lower() == wanted:
+                return info
+        return None
+
+    def _load_preset_or_raise(self, info: mapping_rules.PresetInfo) -> dict:
+        """Read a preset file, translating a preset error into a ControllerError."""
+        try:
+            return mapping_rules.load_preset(info.path)
+        except mapping_rules.PresetError as exc:
+            raise ControllerError(str(exc)) from exc
+
+    def save_preset(self, name: str, *, include_enabled: bool = True) -> Path:
+        """SAVE PRESET: the current mapping of the active document as a reusable file."""
+        pdf = self._require_pdf()
+        config = self._ensure_config()
+        try:
+            preset = mapping_rules.preset_from_mapping(config, pdf.name, name=name)
+            if not include_enabled:
+                for entry in preset["entries"]:
+                    entry.pop("enabled", None)
+            path = mapping_rules.preset_path(self.presets_dir, name)
+            mapping_rules.save_preset(path, preset)
+        except mapping_rules.PresetError as exc:
+            raise ControllerError(str(exc)) from exc
+        self.log.info("Saglabāju preset: %s (%s noteikumi)", path.name, len(preset["entries"]))
+        return path
+
+    def preset_preview(self, name: str) -> dict:
+        """What applying a preset would change, conflicts included (writes nothing)."""
+        info = self.preset_info(name)
+        if info is None:
+            raise ControllerError(f"Preset nav atrasts: {name}")
+        preset = self._load_preset_or_raise(info)
+        row = self.active_document()
+        page_count = int(row.page_count) if row is not None else 0
+        return mapping_rules.preset_preview(
+            preset,
+            page_count=page_count,
+            template_dir=self._require_project().template_dir,
+            config=self._ensure_config(),
+            pdf=self._require_pdf().name,
+        )
+
+    def apply_preset(self, name: str, *, replace_all: bool = False) -> dict:
+        """APPLY PRESET onto the active document (conflicts are reported, not hidden)."""
+        info = self.preset_info(name)
+        if info is None:
+            raise ControllerError(f"Preset nav atrasts: {name}")
+        pdf_name = self._require_pdf().name
+        preset = self._load_preset_or_raise(info)
+        report = self._mapping_mutation(
+            f"preset {info.name}",
+            lambda config: mapping_rules.apply_preset(
+                config, pdf_name, preset, replace_all=replace_all
+            ),
+        )
+        self.log.info(
+            "Preset %s: %s lapas mainītas, %s atiestatītas, %s ārpus dokumenta",
+            info.name,
+            len(report["changed"]),
+            len(report["reset"]),
+            report["skipped_pages"] or "-",
+        )
+        return report
 
     def reset_pages(self, item_ids: Iterable[str | int]) -> list[str]:
         """RESET SELECTED: a core state transition, no config change."""
@@ -828,24 +1070,63 @@ class AppController:
         merged["defaults"] = cfg.normalize_defaults(defaults)
         return merged
 
-    def _set_pages(self, pages: Iterable[int], changes: dict) -> dict:
-        wanted = {int(page) for page in pages}
-        if not wanted:
-            raise ControllerError("Nav atlasīta neviena lapa")
-        config = self._ensure_config()
-        for entry in cfg.page_entries(config, self._active_name()):
-            if int(entry.get("page", 0)) in wanted:
-                entry.update(changes)
-        self._write_config(config)
-        return config
+    # --------------------------------------------------------------- mutating
 
-    def _write_config(self, config: dict) -> None:
+    def _before_mutation(self, reason: str) -> None:
+        """Hook in front of every plan mutation (milestone 8 snapshots here).
+
+        Everything that can change `config.json` calls this first, so a project
+        history/undo feature only has to extend this one method.
+        """
+        self.log.debug("Plāna izmaiņas: %s", reason)
+
+    def _mutate_config(self, reason: str, mutate: Callable[[dict], object]) -> object:
+        """The single funnel for plan changes: load -> hook -> mutate -> validate -> save.
+
+        `mutate` receives the version 2 config (created for the active document when it
+        did not exist yet) and may change it in place; its return value is passed back
+        to the caller. Validation plus the atomic save plus the queue merge happen here
+        for every plan change, so no GUI code writes config.json on its own and
+        milestone 8 has exactly one place to snapshot.
+        """
+        config = self._plan_config()
+        self._before_mutation(reason)
+        result = mutate(config)
+        self._write_config(config, reason=reason)
+        return result
+
+    def _plan_config(self) -> dict:
+        """The config a mutation works on: a complete plan, even without a selection.
+
+        With an active PDF this is `_ensure_config` (which creates the plan for that
+        document); without one it is the plain migrated config, because some actions
+        (enabling a document in the PDF tab) do not need a selection.
+        """
+        if self._active_pdf is None:
+            return cfg.load_config(self._require_project().config_path)
+        return self._ensure_config()
+
+    def _mapping_mutation(self, reason: str, mutate: Callable[[dict], object]) -> object:
+        """`_mutate_config` for `core.mapping_rules`: core errors become ControllerError.
+
+        The tabs only ever catch `ControllerError`, so the core's `MappingError` /
+        `PresetError` messages (range syntax, conflicts, invalid preset) are translated
+        here instead of leaking a second exception type into the GUI.
+        """
+        try:
+            return self._mutate_config(reason, mutate)
+        except (mapping_rules.MappingError, mapping_rules.PresetError) as exc:
+            raise ControllerError(str(exc)) from exc
+
+    def _write_config(self, config: dict, *, reason: str = "") -> None:
         """Validate, save atomically, then merge the plan into state.json."""
         problems = cfg.validate_config(config)
         if problems:
             raise ControllerError("Nederīgs config.json: " + "; ".join(problems[:5]))
         cfg.save_config(self._require_project().config_path, config)
         self.queue.build_queue()
+        if reason:
+            self.log.debug("config.json saglabāts: %s", reason)
 
     # --------------------------------------------------------------- validation
 
