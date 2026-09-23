@@ -1,5 +1,5 @@
 # ============================================================================
-#  PDF Deep Cleanup AI 2026 - static project checks
+#  Cleanup AI 2026 - static project checks
 # ----------------------------------------------------------------------------
 #  What it verifies (no Illustrator needed):
 #    1. #include resolution   - every include in src/Main.jsx exists, the bundle

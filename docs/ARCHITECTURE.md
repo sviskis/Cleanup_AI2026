@@ -1,5 +1,7 @@
 # Architecture
 
+Repository: `sviskis/Cleanup_AI2026` · display name: Cleanup AI 2026
+
 > **Note (v0.2.0):** this document describes the **legacy single-file JSX
 > application** in `src/` (phase 1 of the project). The production architecture is
 > now the Python orchestrator + Illustrator worker; see

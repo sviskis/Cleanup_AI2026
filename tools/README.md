@@ -1,5 +1,7 @@
 # Tools
 
+Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
+
 Development tools. None of them runs inside Illustrator; all of them are safe to
 run at any time.
 

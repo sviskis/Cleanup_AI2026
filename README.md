@@ -1,4 +1,11 @@
-# PDF Deep Cleanup AI 2026
+# Cleanup AI 2026
+
+| | |
+| --- | --- |
+| **Repository** | `sviskis/Cleanup_AI2026` |
+| **Local folder** | `Cleanup_AI2026` |
+| **Display name** | Cleanup AI 2026 |
+| **Version** | 0.2.0 |
 
 Two systems in one repository:
 

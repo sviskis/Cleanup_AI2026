@@ -1,5 +1,5 @@
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/ui/BatchWindow.jsx
 
     Purpose:
@@ -126,7 +126,7 @@ PDC.registerModule("BatchWindow", (function () {
         (function(row) {
             row.checkbox.onClick = function() {
                 if (!ctl.setPageChecked(row.jobIndex, row.checkbox.value)) return;
-                /* atzīmes stāvokli glabā BatchRunner kontrolleris */
+                /* atzÄ«mes stÄvokli glabÄ BatchRunner kontrolleris */
                 updatePageSummaryAndStart();
             };
         })(rowObj);
@@ -199,7 +199,7 @@ PDC.registerModule("BatchWindow", (function () {
             var selected = ctl ? ctl.selectedPageCount() : 0;
             pageSummary.text = "PDF faili: " + (state ? state.pdfFiles.length : 0) +
                 " | Lapas: " + jobs.length +
-                " | Atzīmētas: " + selected;
+                " | AtzÄ«mÄ“tas: " + selected;
             var templateOK = !!(state && state.templateFile && state.templateFile.exists);
             startBtn.enabled = (!busy && selected > 0 && templateOK);
         }
@@ -292,25 +292,25 @@ PDC.registerModule("BatchWindow", (function () {
            ================================================================ */
 
         jobBtn.onClick = function() {
-            var f = Folder.selectDialog("Izvēlies JOB darba folderi");
+            var f = Folder.selectDialog("IzvÄ“lies JOB darba folderi");
             if (!f) return;
             ctl.selectJobFolder(f);
         };
 
         pdfRow.button.onClick = function() {
-            var f = Folder.selectDialog("Izvēlies mapi, kurā meklēt PDF");
+            var f = Folder.selectDialog("IzvÄ“lies mapi, kurÄ meklÄ“t PDF");
             if (!f) return;
             ctl.setManualPdfFolder(f);
         };
 
         tplRow.button.onClick = function() {
-            var f = File.openDialog("Izvēlies Illustrator MASTER template", "Illustrator:*.ai;*.ait", false);
+            var f = File.openDialog("IzvÄ“lies Illustrator MASTER template", "Illustrator:*.ai;*.ait", false);
             if (!f) return;
             ctl.setTemplateFile(f);
         };
 
         outRow.button.onClick = function() {
-            var f = Folder.selectDialog("Izvēlies AI output folderi");
+            var f = Folder.selectDialog("IzvÄ“lies AI output folderi");
             if (!f) return;
             ctl.setOutputFolder(f);
         };
@@ -351,8 +351,8 @@ PDC.registerModule("BatchWindow", (function () {
            ================================================================ */
 
         addLog(PDC.CONFIG.appName + " v" + PDC.CONFIG.version);
-        addLog("Izvēlies JOB darba folderi.");
-        if (PDC.CONFIG.dryRun) addLog("*** DRY RUN: faili netiks rakstīti ***");
+        addLog("IzvÄ“lies JOB darba folderi.");
+        if (PDC.CONFIG.dryRun) addLog("*** DRY RUN: faili netiks rakstÄ«ti ***");
         addLog("Projekts: " + PDC.TextUtils.displayPath(PDC.Paths.getProjectRoot()));
 
         updateFields();

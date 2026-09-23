@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# PDF Deep Cleanup AI 2026 - line endings and diff behaviour
+# Cleanup AI 2026 - line endings and diff behaviour
 # ---------------------------------------------------------------------------
 # Illustrator ExtendScript reads the script files as UTF-8 and the reference
 # scripts use LF line endings, so every source file is stored with LF and

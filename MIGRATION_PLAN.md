@@ -1,5 +1,8 @@
 # MIGRATION PLAN - JSX monolith -> Python orchestrator + JSX worker
 
+> **Repository:** `sviskis/Cleanup_AI2026` · **Local folder:** `Cleanup_AI2026` ·
+> **Display name:** Cleanup AI 2026
+
 Status legend: **DONE** - implemented and verified, **NEXT** - the immediate next
 step, **LATER** - agreed but not started.
 

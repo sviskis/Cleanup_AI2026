@@ -6,7 +6,7 @@
     "future Python/COM layer that wants to read or write the same defaults.",
     "When you change a value here, change it in Config.jsx as well."
   ],
-  "projectName": "PDF Deep Cleanup AI 2026",
+  "projectName": "Cleanup AI 2026",
   "appName": "PDF Deep Cleanup \u2192 AI Template Batch",
   "version": "0.2.0",
 

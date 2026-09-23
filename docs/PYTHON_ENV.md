@@ -1,5 +1,7 @@
 # Python environment
 
+Repository: `sviskis/Cleanup_AI2026` · display name: Cleanup AI 2026
+
 Recorded so that a future session (or another machine) knows exactly what the
 project was developed and tested against.
 
@@ -70,3 +72,33 @@ used for the verification runs recorded in `STATUS.md` and `MIGRATION_PLAN.md`.
   captured output can still look garbled - the log files are always correct UTF-8.
 * `pywin32` is installed with its post-install step handled by pip; no manual
   `pywin32_postinstall.py` run was needed for this project.
+
+## After renaming or moving the repository folder
+
+The runtime code derives every path from the file location
+(`pdf_ai_batch/paths.py` uses `__file__`, the JSX worker uses `$.fileName`), so a
+folder rename needs **no** code change. Two venv details are worth knowing:
+
+* `.venv\Scripts\python.exe` keeps working: it finds its `pyvenv.cfg` next to
+  itself and the `home` entry points at the base interpreter (`C:\Python314`), not
+  at this folder. Every command in this project calls `python.exe` directly, so
+  nothing to do.
+* `.venv\Scripts\activate.ps1` / `activate.bat` still contain the **old** absolute
+  path. They are not used by this project; if you prefer to activate the venv,
+  regenerate it once:
+
+  ```powershell
+  Remove-Item -Recurse -Force .venv
+  python -m venv .venv
+  .venv\Scripts\python.exe -m pip install -r requirements.txt
+  ```
+
+Verify after a rename:
+
+```powershell
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe app.py --diagnose
+```
+
+Both must report the new path and pass.
+

@@ -1,4 +1,4 @@
-# Cline rules for PDF_Cleanup_AI2026
+# Cline rules for Cleanup_AI2026
 
 **Current architecture (v0.2.0): Python orchestrator + Illustrator JSX worker.**
 See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.

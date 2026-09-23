@@ -1,5 +1,5 @@
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/core/Diagnostics.jsx
 
     Purpose:
@@ -121,7 +121,7 @@ PDC.registerModule("Diagnostics", (function () {
     function runText(jobFolder) {
         var results = collect(jobFolder);
         var lines = [];
-        lines.push("PDF Deep Cleanup AI 2026 - DIAGNOSTIKA");
+        lines.push("Cleanup AI 2026 - DIAGNOSTIKA");
         lines.push("========================================");
         lines.push(illustratorInfo());
         lines.push("");

@@ -3,11 +3,25 @@
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/),
 versioning: [Semantic Versioning](https://semver.org/).
 
+Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
+
 ## [Unreleased]
+
+### Changed
+
+- **Project renamed** to `Cleanup_AI2026` / display name **Cleanup AI 2026**
+  (repository `sviskis/Cleanup_AI2026`, local folder `Cleanup_AI2026`).
+  All project-name and path references in tracked files were updated in one
+  commit; git history, branches, tests, the frozen baseline
+  (`legacy/current_working_v10.jsx`, SHA256 unchanged) and the read-only archive
+  (`archive/original/`) are untouched. Runtime code derives every path from its own
+  location, so no runtime path needed a change. The legacy GUI title
+  `PDF Deep Cleanup → AI Template Batch` (a workflow label) and the engine name
+  `PDF Deep Cleanup v6` were deliberately kept.
 
 ### Added
 
-- nothing yet
+- nothing else yet
 
 ## [0.2.0] - 2026-09-23
 

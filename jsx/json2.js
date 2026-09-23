@@ -1,5 +1,5 @@
 /*
-    PDF DEEP CLEANUP AI 2026
+    CLEANUP AI 2026
     Module: jsx/json2.js
 
     A small, dependency free JSON implementation for ExtendScript (ES3).

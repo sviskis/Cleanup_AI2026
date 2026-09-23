@@ -1,5 +1,5 @@
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Tool: tools/jscript_parse.js
 
     Purpose:

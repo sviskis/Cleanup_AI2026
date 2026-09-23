@@ -1,4 +1,4 @@
-"""PDF Deep Cleanup AI 2026 - Python orchestrator.
+"""Cleanup AI 2026 - Python orchestrator.
 
 Python owns: GUI, project folders, PDF discovery, page counting (PyMuPDF /
 pypdf), template discovery and sorting, page -> template mapping, config JSON,

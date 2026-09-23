@@ -1,5 +1,5 @@
 # ============================================================================
-#  PDF Deep Cleanup AI 2026 - unit test runner
+#  Cleanup AI 2026 - unit test runner
 # ----------------------------------------------------------------------------
 #  Builds a test bundle from the src modules (entry point excluded, because it
 #  opens the GUI) and runs it with the Windows Script Host JScript engine:

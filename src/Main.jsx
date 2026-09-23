@@ -1,5 +1,5 @@
 /*
-    PDF DEEP CLEANUP AI 2026
+    CLEANUP AI 2026
     Version: 0.2.0
 
     Adobe:
@@ -67,7 +67,7 @@ function checkVersionConsistency() {
 
 function banner() {
     var lines = [];
-    lines.push("PDF Deep Cleanup AI 2026 v" + PDC.CONFIG.version);
+    lines.push("Cleanup AI 2026 v" + PDC.CONFIG.version);
     lines.push("Project: " + PDC.TextUtils.displayPath(PDC.Paths.getProjectRoot()));
     lines.push("Modules: " + PDC.moduleList());
     if (PDC.CONFIG.dryRun) lines.push("*** DRY RUN REŽĪMS: faili netiks rakstīti ***");

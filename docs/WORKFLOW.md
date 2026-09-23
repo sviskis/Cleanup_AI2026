@@ -1,5 +1,7 @@
 # Workflow
 
+Repository: `sviskis/Cleanup_AI2026` · display name: Cleanup AI 2026
+
 ## 1. Install (nothing to install)
 
 1. Copy or clone the project folder anywhere (OneDrive, a network share, a USB

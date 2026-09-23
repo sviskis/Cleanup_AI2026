@@ -1,5 +1,5 @@
 /*
-    PDF DEEP CLEANUP AI 2026
+    CLEANUP AI 2026
     Entry point: jsx/worker.jsx  (Illustrator side of the Python orchestrator)
 
     Responsibility (ONE page per invocation):

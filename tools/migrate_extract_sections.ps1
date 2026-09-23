@@ -1,5 +1,5 @@
-﻿# ============================================================================
-#  PDF Deep Cleanup AI 2026 - module extraction tool
+# ============================================================================
+#  Cleanup AI 2026 - module extraction tool
 # ----------------------------------------------------------------------------
 #  Purpose:
 #    Rebuilds the src/ modules that contain UNCHANGED logic from the reference
@@ -133,7 +133,7 @@ function Insert-Before {
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/utils/TextUtils.jsx
 
     Purpose:
@@ -192,7 +192,7 @@ Write-Module -RelativePath 'utils\TextUtils.jsx' -Header $header -Body $body -Fo
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/services/FileService.jsx
 
     Purpose:
@@ -322,7 +322,7 @@ Write-Module -RelativePath 'services\FileService.jsx' -Header $header -Body $bod
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/services/LogService.jsx
 
     Purpose:
@@ -442,7 +442,7 @@ Write-Module -RelativePath 'services\LogService.jsx' -Header $header -Body $body
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/core/PdfPageCount.jsx
 
     Purpose:
@@ -486,7 +486,7 @@ Write-Module -RelativePath 'core\PdfPageCount.jsx' -Header $header -Body $body -
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/core/TemplateManager.jsx
 
     Purpose:
@@ -538,7 +538,7 @@ Write-Module -RelativePath 'core\TemplateManager.jsx' -Header $header -Body $bod
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/core/OutputManager.jsx
 
     Purpose:
@@ -583,7 +583,7 @@ Write-Module -RelativePath 'core\OutputManager.jsx' -Header $header -Body $body 
 # ============================================================================
 $header = @'
 /*
-    PDF DEEP CLEANUP AI 2026
+    CLEANUP AI 2026
     Module: jsx/cleanup.jsx
 
     SINGLE SOURCE OF TRUTH for Illustrator document handling in this project.
@@ -902,7 +902,7 @@ Write-Module -RelativePath 'jsx\cleanup.jsx' -Header $header -Body $body -Footer
 # ============================================================================
 $header = @'
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/ui/BatchWindow.jsx
 
     Purpose:

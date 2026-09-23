@@ -1,5 +1,5 @@
 /*
-    PDF DEEP CLEANUP AI 2026
+    CLEANUP AI 2026
     Module: jsx/cleanup.jsx
 
     SINGLE SOURCE OF TRUTH for Illustrator document handling in this project.
@@ -631,9 +631,9 @@ var PDFCleanup = (function () {
     function copyTemplateToOutput(templateFile, outputFile, overwrite) {
         if (outputFile.exists) {
             if (!overwrite) return false;
-            if (!outputFile.remove()) throw new Error("Nevar pārrakstīt esošo AI: " + outputFile.fsName);
+            if (!outputFile.remove()) throw new Error("Nevar pÄrrakstÄ«t esoÅ¡o AI: " + outputFile.fsName);
         }
-        if (!templateFile.copy(outputFile.fsName)) throw new Error("Neizdevās nokopēt MASTER template uz: " + outputFile.fsName);
+        if (!templateFile.copy(outputFile.fsName)) throw new Error("NeizdevÄs nokopÄ“t MASTER template uz: " + outputFile.fsName);
         return true;
     }
 
@@ -643,14 +643,14 @@ var PDFCleanup = (function () {
         var out = new File(outputFile);
         if (out.exists) {
             if (!overwrite) return null;
-            if (!out.remove()) throw new Error("Nevar pārrakstīt esošo AI: " + out.fsName);
+            if (!out.remove()) throw new Error("Nevar pÄrrakstÄ«t esoÅ¡o AI: " + out.fsName);
         }
         var templateDoc = app.open(templateFile);
         try {
             templateDoc.saveAs(out);
         } catch (eSave) {
             safeClose(templateDoc, SaveOptions.DONOTSAVECHANGES);
-            throw new Error("Neizdevās saglabāt template kā AI: " + out.fsName + " (" + eSave + ")");
+            throw new Error("NeizdevÄs saglabÄt template kÄ AI: " + out.fsName + " (" + eSave + ")");
         }
         return templateDoc;
     }

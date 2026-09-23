@@ -1,5 +1,5 @@
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Module: src/config/Config.jsx
 
     Purpose:
@@ -19,7 +19,7 @@
 
 PDC.CONFIG = {
 
-    projectName: "PDF Deep Cleanup AI 2026",
+    projectName: "Cleanup AI 2026",
     appName: "PDF Deep Cleanup → AI Template Batch",
     version: "0.2.0",
 

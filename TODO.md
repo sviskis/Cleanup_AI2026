@@ -1,5 +1,7 @@
 # TODO
 
+Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
+
 ## P0 - Critical
 
 - [ ] Run the one page milestone in Illustrator (`MIGRATION_PLAN.md` §3) and

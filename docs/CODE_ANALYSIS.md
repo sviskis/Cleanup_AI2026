@@ -1,5 +1,7 @@
 # Code analysis - reference script and refactoring decisions
 
+Repository: `sviskis/Cleanup_AI2026` · display name: Cleanup AI 2026
+
 Analysis date: 2026-09-23
 Scope: every `.jsx` file that existed in the project folder before the restructure.
 
@@ -45,7 +47,7 @@ No InDesign, no Photoshop, no Bridge, no COM, no Python in the reference code.
 All three are stored unchanged in `archive/original/` (see
 `archive/original/ARCHIVE_MANIFEST.md` for SHA256 hashes).
 
-Duplicates: the files in `PDF_Cleanup_AI2026\PDF_Deep_Cleanup_AI_Template_BATCH\`
+Duplicates: the files in `Cleanup_AI2026\PDF_Deep_Cleanup_AI_Template_BATCH\`
 were byte identical to the files in `..\PDF_Deep_Cleanup_AI_Template_BATCH\`.
 
 ## 4. Entry point of the reference script
@@ -322,7 +324,7 @@ by hand.
 ## 16. Recommended structure (delivered)
 
 ```text
-PDF_Cleanup_AI2026/
+Cleanup_AI2026/
 ├── src/
 │   ├── Main.jsx                  entry point, #include list
 │   ├── config/Config.jsx         all values

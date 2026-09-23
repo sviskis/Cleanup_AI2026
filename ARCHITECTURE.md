@@ -1,5 +1,8 @@
 # ARCHITECTURE - Python orchestrator + Illustrator JSX worker
 
+> **Repository:** `sviskis/Cleanup_AI2026` · **Local folder:** `Cleanup_AI2026` ·
+> **Display name:** Cleanup AI 2026
+
 Architecture **as of v0.2.0**: the production pipeline is Python, and Illustrator
 runs as a one-page worker.
 

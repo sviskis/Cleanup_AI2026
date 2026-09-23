@@ -1,5 +1,5 @@
 /*
-    PDF Deep Cleanup AI 2026
+    Cleanup AI 2026
     Test: tests/jscript/test_json_contract.js
 
     Verifies the JSON layer that the Python orchestrator and the Illustrator

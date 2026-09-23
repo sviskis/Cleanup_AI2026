@@ -1,5 +1,5 @@
 # ============================================================================
-#  PDF Deep Cleanup AI 2026 - line ending normaliser
+#  Cleanup AI 2026 - line ending normaliser
 # ----------------------------------------------------------------------------
 #  Purpose:
 #    The reference ExtendScript file uses LF line endings and UTF-8 without BOM.

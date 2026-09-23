@@ -26,7 +26,7 @@ from .run_one import main as run_one_main
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="app.py",
-        description="PDF Deep Cleanup AI 2026 - Python orchestrator for the Illustrator worker.",
+        description="Cleanup AI 2026 - Python orchestrator for the Illustrator worker.",
     )
     parser.add_argument("--version", action="store_true", help="print the version and exit")
     parser.add_argument("--diagnose", action="store_true", help="print environment and path information")
@@ -48,15 +48,33 @@ def print_diagnostics() -> int:
 
 
 def print_health() -> int:
+    """Check whether a job can run right now: files, runtime folder and COM.
+
+    Uses the same connection strategy as a real run (attach to a running
+    Illustrator, otherwise launch it through Dispatch), because GetActiveObject
+    can fail even while Illustrator is running: the Running Object Table entry is
+    not always visible (for example when the instance was started elevated),
+    while Dispatch still connects.
+    """
     setup_logging(None)
     adapter = IllustratorAdapter(paths.worker_jsx(), paths.runtime_dir(), timeout=5.0)
-    attached = adapter.attach()
+
+    connected_via = "none"
+    if adapter.attach():
+        connected_via = "attach (GetActiveObject)"
+    elif adapter.launch():
+        connected_via = "launch (Dispatch)"
+
     report = adapter.health_check()
     for key, value in report.items():
         print(f"{key:<20} : {value}")
-    if not attached:
+    print(f"{'connected_via':<20} : {connected_via}")
+
+    if not report["ok"]:
         print("")
-        print("Illustrator nav atvērts. Atver to un palaid --health vēlreiz, vai izmanto --run-one (tas palaiž pats).")
+        print("Illustrator nav sasniedzams (COM).")
+        print("Pārbaudi, vai Illustrator ir palaists un nav atvērts modāls dialogs,")
+        print("vai izmanto --run-one (tas izmanto to pašu attach -> launch ceļu).")
         return 1
     return 0
 

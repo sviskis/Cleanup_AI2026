@@ -1,5 +1,7 @@
 # Testing
 
+Repository: `sviskis/Cleanup_AI2026` · display name: Cleanup AI 2026
+
 There are **three** automated gates plus a manual Illustrator checklist.
 
 | Gate | Command | What it proves | Needs Illustrator |

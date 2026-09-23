@@ -1,6 +1,7 @@
 # Current Status
 
 Version: 0.2.0
+Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 Status: **Python orchestrator + Illustrator worker implemented and verified by automated gates; the first real Illustrator run of the one page milestone is pending**
 
 ## Working

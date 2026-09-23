@@ -1,5 +1,5 @@
 # ============================================================================
-#  PDF Deep Cleanup AI 2026 - freeze the current working JSX application
+#  Cleanup AI 2026 - freeze the current working JSX application
 # ----------------------------------------------------------------------------
 #  Builds ONE standalone, runnable .jsx from the current multi-module app in
 #  src/ by inlining every #include in order. The result is the frozen reference
@@ -78,7 +78,7 @@ foreach ($f in $ordered) {
 
 $banner = New-Object System.Collections.ArrayList
 [void]$banner.Add("/*")
-[void]$banner.Add("    PDF DEEP CLEANUP AI 2026 - FROZEN WORKING VERSION (v10 baseline)")
+[void]$banner.Add("    CLEANUP AI 2026 - FROZEN WORKING VERSION (v10 baseline)")
 [void]$banner.Add("")
 [void]$banner.Add("    This single file was generated automatically by tools/freeze_legacy.ps1.")
 [void]$banner.Add("    It is the frozen, runnable snapshot of the current working Illustrator")
