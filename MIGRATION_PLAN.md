@@ -37,11 +37,11 @@ state with recovery, milestone-first order).
 | 6 | `adapters/illustrator.py` (pywin32, attach -> launch, file handoff, timeout) | **DONE** |
 | 7 | First milestone: one page end to end (`run_one.py`) | **DONE** - two real Illustrator runs recorded in `STATUS.md` |
 | 8 | Queue + state: `state.json`, WAITING/RUNNING/DONE/ERROR/SKIPPED/INTERRUPTED, resume, continue, retry | **DONE** (`docs/QUEUE_STATE.md`) |
-| 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **NEXT** |
+| 9 | GUI: Tkinter notebook - PROJECT / PDF / MAPPING / RUN tabs | **DONE** (`docs/GUI.md`, `temp/gui_acceptance.txt`) |
 | 10 | Batch policy: one bad page must not stop the batch, final summary | **DONE** for the policy + summary; multi PDF queue still open |
 | 11 | Regression against the frozen baseline, then retire the legacy app | **LATER** |
 
-## 2. What exists now (v0.2.0)
+## 2. What exists now (v0.4.0)
 
 ```text
 jsx/cleanup.jsx      canonical Illustrator engine (cleanup + document helpers + stats contract)
@@ -49,8 +49,12 @@ jsx/json2.js         ES3 JSON polyfill (JSON.stringify / JSON.parse)
 jsx/worker.jsx       one page worker: request -> cleanup -> template -> output AI -> result
 
 pdf_ai_batch/
-  app.py             CLI entry (--diagnose, --health, --run-one, --gui placeholder)
+  app.py             entry point: no args -> GUI, --diagnose/--health/--run-one/--batch
+  gui/               Tkinter GUI: main_window + project/pdf/mapping/run tabs,
+                     controller (no Tk, no COM), tasks (worker thread + event queue),
+                     context (what a tab may ask the window for)
   run_one.py         the milestone command: one page, one request, one result
+  batch.py           the queue CLI: build/status/run-next/run-all/continue/retry-*/skip/reset
   paths.py           repo relative paths (jsx/, runtime/)
   logging_setup.py   LOG/app.log + batch log + UTF-8 console
   core/jsonio.py     atomic IO + wait_for_json (job_id/run_id matching, timeout)

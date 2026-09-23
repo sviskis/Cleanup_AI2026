@@ -240,6 +240,111 @@ def test_run_job_reports_com_problems_as_a_result(adapter):
     assert "COM" in result.message
 
 
+class StaleApp:
+    """A dead COM connection: every attribute access fails like the real thing."""
+
+    def __getattr__(self, name):
+        raise RuntimeError("(-2147220995, 'Object is not connected to server', None, None)")
+
+
+def test_ensure_app_discards_a_stale_com_connection(adapter, monkeypatch):
+    """Illustrator may be closed or restarted while the tool stays open."""
+    calls: list[str] = []
+
+    class FakeClient:
+        @staticmethod
+        def GetActiveObject(prog_id):
+            calls.append("attach")
+            return FakeApp(adapter.worker_jsx)
+
+        @staticmethod
+        def Dispatch(prog_id):
+            calls.append("launch")
+            return FakeApp(adapter.worker_jsx)
+
+    adapter._app = StaleApp()
+    monkeypatch.setattr(adapter, "_com_client", lambda: FakeClient)
+
+    assert adapter.ensure_app() is True
+    assert calls == ["attach"]  # the dead object was dropped, a fresh attach succeeded
+    assert adapter.app_info().name == "Fake Illustrator"
+
+
+def test_ensure_app_reconnects_when_the_com_object_belongs_to_another_thread(adapter, monkeypatch):
+    """The GUI runs every batch in a fresh worker thread; a proxy cannot be shared."""
+    calls: list[str] = []
+
+    class FakeClient:
+        @staticmethod
+        def GetActiveObject(prog_id):
+            calls.append("attach")
+            return FakeApp(adapter.worker_jsx)
+
+    adapter._app = FakeApp(adapter.worker_jsx)  # created in "another" thread
+    adapter._app_thread = -1
+    monkeypatch.setattr(adapter, "_com_client", lambda: FakeClient)
+    monkeypatch.setattr(adapter, "_prepare_thread", lambda: None)
+
+    assert adapter.ensure_app() is True
+    assert calls == ["attach"]
+    import threading
+
+    assert adapter._app_thread == threading.get_ident()
+
+
+def test_com_is_initialized_once_per_thread(adapter, monkeypatch):
+    """COM is apartment bound: a worker thread must get its own apartment."""
+    import sys
+    import threading
+    import types
+
+    calls: list[int] = []
+    monkeypatch.setitem(
+        sys.modules, "pythoncom", types.SimpleNamespace(CoInitialize=lambda: calls.append(threading.get_ident()))
+    )
+
+    adapter._prepare_thread()
+    adapter._prepare_thread()  # same thread: nothing to do
+    assert calls == [threading.get_ident()]
+
+    thread = threading.Thread(target=adapter._prepare_thread)
+    thread.start()
+    thread.join(timeout=5)
+
+    assert len(calls) == 2
+    assert calls[1] != calls[0]  # the worker thread got its own apartment
+
+
+def test_ensure_app_reports_missing_pywin32_instead_of_raising(adapter, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pythoncom", None)  # "import pythoncom" fails
+
+    assert adapter.ensure_app() is False
+    assert adapter._app is None
+    assert adapter.health_check()["com_attached"] is False
+
+
+def test_health_check_reports_a_stale_connection_as_not_attached(adapter):
+    adapter._app = StaleApp()
+
+    report = adapter.health_check()
+
+    assert report["com_attached"] is False
+    assert report["ok"] is False
+    assert adapter._app is None
+
+
+def test_invoke_worker_reconnects_when_the_cached_app_is_dead(adapter, monkeypatch):
+    fresh = FakeApp(adapter.worker_jsx)
+    monkeypatch.setattr(adapter, "_com_client", lambda: type("C", (), {"GetActiveObject": staticmethod(lambda p: fresh)}))
+    adapter._app = StaleApp()
+
+    adapter.invoke_worker()
+
+    assert fresh.calls == [str(adapter.worker_jsx)]
+
+
 def test_invoke_worker_requires_the_worker_file(adapter, tmp_path):
     adapter.worker_jsx = tmp_path / "missing.jsx"
     adapter._app = FakeApp(adapter.worker_jsx)

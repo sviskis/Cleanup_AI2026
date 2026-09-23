@@ -5,6 +5,78 @@ versioning: [Semantic Versioning](https://semver.org/).
 
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
 
+## [0.4.0] - 2026-09-23
+
+Milestone 3: the **Tkinter GUI** (`python app.py`) as a thin presentation layer over
+the proven core. `jsx/cleanup.jsx`, `jsx/worker.jsx` and the Python <-> JSX contract
+are untouched; no cleanup logic, no queue logic and no validation logic was copied
+into the GUI.
+
+### Added
+
+- `pdf_ai_batch/gui/controller.py` - `AppController`, `MappingRow`, `PdfEntry`,
+  `ProgressSnapshot`: every GUI action as a plain method (project, PDF, mapping,
+  run, progress), no Tk and no COM, so the whole GUI logic is unit testable.
+- `pdf_ai_batch/gui/tasks.py` - `EventBus`, `QueueLogHandler`, `TaskRunner`: the
+  worker thread bridge. Long work runs off the Tk main thread, events come back
+  through `queue.Queue` and `root.after(...)`; one task at a time.
+- `pdf_ai_batch/gui/context.py` - `GuiContext`, the only thing a tab may ask the
+  window for (status bar, log view, refresh, run a task, busy state).
+- `pdf_ai_batch/gui/main_window.py` - the window "Cleanup AI 2026": four tabs, the
+  120 ms event pump, per JOB file logging, close safety.
+- `pdf_ai_batch/gui/project_tab.py` - NEW PROJECT / OPEN PROJECT / ADD PDF /
+  ADD TEMPLATES / OPEN JOB FOLDER + the six JOB folders with their state.
+- `pdf_ai_batch/gui/pdf_tab.py` - PDF list of `JOB/PDF` with file name, absolute
+  path, page count (`core/pdf_info.py`), method, size and config status.
+- `pdf_ai_batch/gui/mapping_tab.py` - the `USE / PAGE / TEMPLATE / LAYER / OUTPUT /
+  STATUS` Treeview, SELECT ALL/NONE, ENABLE/DISABLE SELECTED, RESET SELECTED,
+  VALIDATE, AUTO ASSIGN TEMPLATES, ASSIGN TEMPLATE, USE DEFAULT TEMPLATE, REFRESH,
+  double click = change that row's template, and a validation panel.
+- `pdf_ai_batch/gui/run_tab.py` - RUN SELECTED / RUN ALL ENABLED / CONTINUE /
+  RETRY ERRORS / RETRY INTERRUPTED / REFRESH STATUS / HEALTH CHECK, an
+  "overwrite" checkbox, the progress panel (`Page 014 / 014` + bar + counts, all
+  derived from the queue state) and the live log view.
+- `pdf_ai_batch/gui/__main__.py` - `python -m pdf_ai_batch.gui`.
+- `pdf_ai_batch/core/queue.py` - `BatchQueue.run_items()` (run exactly a selection;
+  only WAITING/INTERRUPTED rows, DONE/SKIPPED/ERROR need an explicit reset/retry)
+  and `BatchQueue.reload()` (re-read `state.json` without recovery).
+- `docs/GUI.md` - GUI architecture, threading model, tab reference, validation,
+  overwrite, close safety and the acceptance evidence.
+- Tests: `tests/test_gui_controller.py` (17), `tests/test_gui_tasks.py` (6),
+  `tests/test_gui_smoke.py` (6) and 4 new queue/adapter tests. All GUI tests run
+  without a display (the window test skips itself when Tk cannot open).
+
+### Changed
+
+- `app.py` - the default action (no arguments) is now the GUI; `--gui` is explicit,
+  `--batch` / `--run-one` / `--diagnose` / `--health` are unchanged.
+- `adapters/illustrator.py` - COM is apartment aware: `_prepare_thread()` calls
+  `CoInitialize` once per thread, a cached application object is dropped when it
+  belongs to another thread or is stale, and `invoke_worker()` validates the
+  connection instead of trusting it. Needed because the GUI runs every batch in a
+  fresh worker thread (the CLI ran in the main thread).
+- `core/queue.py` - `recover_running()` also removes a partial output AI that the
+  interrupted attempt was still writing, so `CONTINUE`/`RETRY INTERRUPTED` really
+  re-process the page instead of reporting `SKIP`.
+- Validation in the GUI is a composition of existing core checks only:
+  `validation.preflight`, `validation.check_file` per distinct template and
+  `config.validate_config`. Illustrator is checked only after an explicit
+  HEALTH CHECK, so opening the GUI never launches it.
+- `VERSION` / `pdf_ai_batch/__init__.py` - 0.4.0.
+
+### Fixed
+
+- MAPPING: a table refresh (RESET/ENABLE/DISABLE/VALIDATE, or the progress pump)
+  dropped the operator's row selection, so "RESET SELECTED" followed by
+  "RUN SELECTED" reported "no pages selected".
+- MAPPING: the detail line kept a stale message (e.g. "no JOB open") after the JOB
+  was opened.
+- `invoke_worker`/`ensure_app`/`health_check` trusted a cached COM object: after
+  Illustrator was closed, restarted or when a new worker thread used it, every call
+  failed with "Object is not connected to server".
+- Window close cancels the pending `after(...)` pump (no "invalid command name
+  ..._pump" noise from a destroyed window).
+
 ## [0.3.0] - 2026-09-23
 
 Milestone 2: a **persistent batch queue with state recovery** on top of the proven

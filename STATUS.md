@@ -1,8 +1,8 @@
 # Current Status
 
-Version: 0.3.0
+Version: 0.4.0
 Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display name Cleanup AI 2026
-Status: **Milestone 2 done - the persistent batch queue (state.json, recovery, continue/retry) runs real multi page Illustrator batches; the GUI is not started yet**
+Status: **Milestone 3 done - the Tkinter GUI (`python app.py`) drives the proven queue in a worker thread and ran a real Illustrator batch (run selected, forced ERROR, retry, close/reopen); the cleanup JSX and the Python<->JSX contract are unchanged**
 
 ## Working
 
@@ -49,6 +49,30 @@ Status: **Milestone 2 done - the persistent batch queue (state.json, recovery, c
   pass; a failed attempt removes its partial output so retries really run.
 * Details, schema and the real-run evidence: `docs/QUEUE_STATE.md`.
 
+### Tkinter GUI (milestone 3)
+
+* `pdf_ai_batch/gui/` - `main_window.py` (window, 4 tabs, 120 ms event pump, close
+  safety), `project_tab.py`, `pdf_tab.py`, `mapping_tab.py`, `run_tab.py`,
+  `controller.py` (all GUI logic, **no Tk, no COM**), `tasks.py` (worker thread +
+  event queue + log handler), `context.py`.
+* `python app.py` (or `--gui`, or `python -m pdf_ai_batch.gui`) opens the window;
+  opening it never launches Illustrator. Illustrator is contacted only by an
+  explicit HEALTH CHECK or a RUN (`adapters/illustrator.py`, the only COM code).
+* GUI -> controller -> core/adapter. The GUI never touches win32com, JSX or
+  `state.json`: plan edits go to `CONFIG/config.json` and are merged into
+  `state.json` by `BatchQueue.build_queue`; RESET/RETRY are core transitions.
+* Threading: every long action runs in a `TaskRunner` worker thread; the Tk main
+  thread only renders events (`queue.Queue` + `root.after`). While a task runs, the
+  mutating buttons of PROJECT/PDF/MAPPING are disabled (the worker owns state.json).
+* Validation = existing core checks only (`validation.preflight`,
+  `validation.check_file`, `config.validate_config`), shown in the MAPPING tab and
+  enforced before every RUN; no Illustrator call unless a health check asked for it.
+* Progress ("Page 014 / 014", bar, DONE/WAITING/RUNNING/ERROR/SKIPPED/INTERRUPTED
+  counts) derives from the queue state - the GUI keeps no counter of its own. The log
+  panel is a view; `JOB/LOG/app.log` + `JOB/LOG/batch_<timestamp>.log` stay canonical.
+* Details, tab reference and acceptance evidence: `docs/GUI.md`;
+  screenshots `temp/gui_mapping.png`, `temp/gui_run.png`.
+
 ### Frozen baseline
 
 * `legacy/current_working_v10.jsx` - 2789 lines, SHA256
@@ -62,7 +86,7 @@ Status: **Milestone 2 done - the persistent batch queue (state.json, recovery, c
 | --- | --- |
 | `tools/check_jsx.ps1` | 0 errors, 0 warnings (2 entry points, ES3 compile, ES3 scan, API wiring, `jsx/` ASCII only + no BOM + LF) |
 | `tools/run_tests.ps1` | 79 JSX unit tests + 44 JSON contract tests |
-| `pytest` | 143 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue |
+| `pytest` | 182 tests (Python 3.14 venv): contract, absolute paths, encoding, state, queue, GUI controller/tasks/window |
 | `app.py --diagnose` | paths and interpreter reported |
 | `run_one --preflight-only` (14 page demo PDF) | 17 checks OK, request JSON written to `runtime/current_job.json` |
 | `run_one --dry-run` | valid contract request produced |
@@ -70,6 +94,7 @@ Status: **Milestone 2 done - the persistent batch queue (state.json, recovery, c
 | **Same run with a Latvian job folder** (`temp\Realitātes tests LV`, PDF `Māja Āčēģī.pdf`) | **MILESTONE OK**: Latvian characters survive request JSON, worker log and result JSON without mojibake |
 | **Batch queue, real Illustrator** (`temp\QUEUE_JOB`, `temp/run_queue_batch_test.py`) | `--run-all` -> 001 DONE / 002 SKIPPED / 003 DONE / 004 DONE; second pass reruns nothing; lost per-page template -> 003 ERROR + 004 DONE; `--retry-errors` -> 003 DONE; process killed during page 4 -> `--status` shows 004 INTERRUPTED -> `--continue` -> 004 DONE |
 | **13 page pass** of the same PDF through the queue | `DONE=13 SKIPPED=1`, `state.json` written after every page, 0 documents left open |
+| **GUI acceptance, real Illustrator** (`temp/run_gui_acceptance.py`, `temp/gui_acceptance.txt`) | Open JOB -> PDF shows 14 pages (PyMuPDF) -> 14 mapping rows with the persisted states -> RESET SELECTED + manual template change -> VALIDATE 24 checks / 0 errors -> RUN SELECTED: live `WAITING -> RUNNING -> DONE` x3 -> forced ERROR (`OUTPUT_PREP_FAILED`, locked output) -> RETRY ERRORS: `ERROR -> WAITING -> RUNNING -> DONE` -> window closed and reopened: states restored -> 0 Illustrator documents open. Screenshots: `temp/gui_mapping.png`, `temp/gui_run.png` |
 | Adapter handshake (fake Illustrator) | stale result deleted, matching result accepted, mismatching result rejected + logged, late result picked up, timeout with log tail, COM error as `ERROR` result |
 | Frozen baseline | generated, ES3 compile verified, hash recorded |
 
@@ -108,9 +133,10 @@ Status: **Milestone 2 done - the persistent batch queue (state.json, recovery, c
 
 ## Next milestone
 
-1. Tkinter GUI (PROJECT / PDF / MAPPING / RUN) on top of `core/queue.py` +
-   `core/state.py` - now that the queue and the CLI are proven.
-2. Multi PDF queue in one run (the schema already carries `pdf` per item).
-3. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
+1. Multi PDF queue in one run (the schema already carries `pdf` per item); the GUI
+   would then show one MAPPING table per PDF.
+2. Regression R1-R5 against `legacy/current_working_v10.jsx` on the same job, and a
    real `.ait` template run (`template_mode = "saveas"`).
-4. "Stop after the current page" for the batch loop.
+3. "Stop after the current page" for the batch loop (now: close the window and
+   `CONTINUE`, or Ctrl+C plus `--continue`).
+4. Remember the last JOB (and its active PDF) between GUI sessions.

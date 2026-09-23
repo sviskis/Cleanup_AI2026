@@ -1,16 +1,13 @@
 """Application entry point.
 
-Current stage: the CLI proves the pipeline - one page (`run_one`) and the
-persistent batch queue (`batch`). The Tkinter GUI (PROJECT / PDF / MAPPING / RUN
-tabs) is a later milestone and will be launched from here.
-
-    python app.py --diagnose
-    python app.py --health
+    python app.py                 -> the Tkinter GUI (Tabs: PROJECT / PDF / MAPPING / RUN)
+    python app.py --gui           -> same, explicit
     python app.py --run-one --job "C:/JOB" --pdf manual.pdf --page 17
     python app.py --batch --job "C:/JOB" --run-all
-    python -m pdf_ai_batch.app --diagnose
+    python app.py --diagnose | --health | --version
 
-    python app.py            -> GUI when it exists, otherwise prints this help
+Opening the GUI never launches Illustrator: it is only contacted for an explicit
+health check or a run (see docs/GUI.md).
 """
 
 from __future__ import annotations
@@ -29,14 +26,14 @@ from .run_one import main as run_one_main
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="app.py",
-        description="Cleanup AI 2026 - Python orchestrator for the Illustrator worker.",
+        description="Cleanup AI 2026 - Python orchestrator + Tkinter GUI for the Illustrator worker.",
     )
     parser.add_argument("--version", action="store_true", help="print the version and exit")
     parser.add_argument("--diagnose", action="store_true", help="print environment and path information")
     parser.add_argument("--health", action="store_true", help="check that a job can run now (files, runtime, Illustrator via attach -> launch)")
+    parser.add_argument("--gui", action="store_true", help="start the GUI (default when no action is given)")
     parser.add_argument("--run-one", action="store_true", help="run the one page milestone test")
-    parser.add_argument("--batch", action="store_true", help="run the persistent batch queue (see pdf_ai_batch/batch.py)")
-    parser.add_argument("--gui", action="store_true", help="start the GUI (next milestone)")
+    parser.add_argument("--batch", action="store_true", help="run the persistent batch queue (pdf_ai_batch/batch.py)")
     return parser
 
 
@@ -107,17 +104,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.batch:
         return batch_cli(forwarded)
 
-    if args.gui:
-        print("GUI vēl nav ieviests (nākamais solis). Šobrīd izmanto --run-one, --batch vai --diagnose.")
-        return 1
+    # default action (and --gui): the Tkinter GUI
+    if args.gui or not forwarded:
+        try:
+            from .gui import run_gui
+        except ImportError as exc:  # pragma: no cover - no Tk in this interpreter
+            print(f"GUI nav pieejams: {exc}")
+            print("Izmanto --batch (rinda) vai --run-one (viena lapa).")
+            return 1
+        return run_gui(forwarded)
 
     build_parser().print_help()
     print("")
-    print(
-        f"pdf_ai_batch {__version__} - --batch (rinda + state.json), --run-one (viena lapa), "
-        "--diagnose, --health"
-    )
-    return 0
+    print(f"pdf_ai_batch {__version__} - nezināma darbība: {' '.join(forwarded)}")
+    return 3
 
 
 if __name__ == "__main__":

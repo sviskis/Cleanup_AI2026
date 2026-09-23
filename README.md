@@ -29,10 +29,10 @@ PDF page
 
 ## Status
 
-Version **0.3.0**. The Python pipeline, the JSX worker, the one page milestone and
-the **persistent batch queue** (state.json, recovery, continue/retry, CLI) are
-implemented and verified with real Illustrator runs. The Tkinter GUI is the next
-milestone. See `STATUS.md` and `docs/QUEUE_STATE.md`.
+Version **0.4.0**. The Python pipeline, the JSX worker, the one page milestone, the
+**persistent batch queue** (state.json, recovery, continue/retry, CLI) and the
+**Tkinter GUI** are implemented and verified with real Illustrator runs. See
+`STATUS.md`, `docs/QUEUE_STATE.md` and `docs/GUI.md`.
 
 ## Quick start (new pipeline)
 
@@ -49,10 +49,15 @@ python -m venv .venv
 
 # 4. put real templates into temp\DEMO_JOB\TEMPLATE (MASTER must have an ARTWORK layer)
 
-# 5. one page, end to end
+# 5. the GUI (PROJECT / PDF / MAPPING / RUN)
+.venv\Scripts\python.exe app.py
+#    NEW PROJECT or OPEN PROJECT -> pick the PDF -> check the MAPPING table ->
+#    VALIDATE -> RUN ALL ENABLED. Opening the GUI never starts Illustrator.
+
+# 6. one page, end to end (CLI)
 .venv\Scripts\python.exe -m pdf_ai_batch.run_one --job temp\DEMO_JOB --pdf calendar.pdf --page 3
 
-# 6. the whole queue (state.json in JOB/CONFIG, resumable)
+# 7. the whole queue (state.json in JOB/CONFIG, resumable)
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --build --pages 1-4
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --run-all
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --status
@@ -64,6 +69,10 @@ python -m venv .venv
 writes and prints the request JSON. `batch`: `--status` shows the per page table,
 finished pages are never redone, one bad page never stops the batch; exit code 1
 means at least one ERROR/INTERRUPTED is still open.
+
+GUI and CLI share the same `state.json`, so a batch started in the GUI can be
+continued from the CLI and vice versa (`--status`, `--continue`, `--retry-errors`).
+
 
 ## Quick start (legacy JSX application)
 
@@ -159,7 +168,11 @@ src/
   ui/BatchWindow.jsx          ScriptUI view (widgets + event wiring only)
 
 config/default_config.json    JSON mirror of Config.jsx (documentation, not input)
-docs/                         CODE_ANALYSIS, ARCHITECTURE, WORKFLOW, TESTING
+pdf_ai_batch/                 Python orchestrator + Tkinter GUI (new pipeline)
+  app.py                      entry point: no args -> GUI, --batch/--run-one/--diagnose/--health
+  gui/                        Tkinter GUI (main_window, project/pdf/mapping/run tabs,
+                              controller without Tk/COM, tasks = worker thread bridge)
+docs/                         CODE_ANALYSIS, ARCHITECTURE, WORKFLOW, TESTING, QUEUE_STATE, GUI
 tests/                        TEST_PLAN.md, jscript/ unit tests + host stubs
 examples/JOB_STRUCTURE.md     the JOB folder contract and a minimum test job
 logs/                         runtime session log + error reports (git ignored)

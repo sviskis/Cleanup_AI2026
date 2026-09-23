@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -67,6 +68,16 @@ ProgressCallback = Callable[["RunOutcome"], None]
 
 class QueueError(RuntimeError):
     """Raised for queue misuse: unknown item, illegal transition."""
+
+
+def _stamp_to_epoch(stamp: str) -> float | None:
+    """Parse a state.json timestamp ("2026-09-23 18:00:47") into epoch seconds."""
+    if not stamp:
+        return None
+    try:
+        return datetime.strptime(stamp, state.TIMESTAMP_FORMAT).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -281,14 +292,38 @@ class BatchQueue:
         return backup
 
     def recover_running(self) -> list[str]:
-        """Stale RUNNING items become INTERRUPTED (never DONE, never stuck)."""
+        """Stale RUNNING items become INTERRUPTED (never DONE, never stuck).
+
+        A killed attempt may have left a partial output AI behind. It is removed when
+        it was written during that attempt, otherwise the next RETRY/CONTINUE would
+        report SKIP ("output jau eksistē") instead of processing the page.
+        """
         recovered = state.recover_running(self.document)
         if recovered:
+            for job_id in recovered:
+                item = self.document.find(job_id)
+                if item is not None:
+                    self._discard_interrupted_output(item)
             self.save()
             self.log.warning(
                 "Atjaunoju pārtrauktos elementus (%s) -> INTERRUPTED", ", ".join(recovered)
             )
         return recovered
+
+    def _discard_interrupted_output(self, item: state.QueueItem) -> None:
+        """Remove an output file that the interrupted attempt was still writing."""
+        target = Path(item.output)
+        try:
+            if not target.exists():
+                return
+            started = _stamp_to_epoch(item.started)
+            if started is not None and target.stat().st_mtime + 1.0 < started:
+                # older than the interrupted attempt: not ours, keep it
+                return
+            target.unlink()
+            self.log.warning("Izdzēsu pārtrauktā mēģinājuma output failu %s", target.name)
+        except OSError as exc:  # noqa: BLE001 - recovery must not fail the queue
+            self.log.warning("Nevar izdzēst pārtraukto output failu %s: %s", target, exc)
 
     # --------------------------------------------------------------------- basics
 
@@ -527,6 +562,41 @@ class BatchQueue:
     def retry_interrupted(self, *, run: bool = False, progress: ProgressCallback | None = None) -> RetryResult:
         """INTERRUPTED -> WAITING (used after a crash or a manual stop)."""
         return self._requeue(state.RETRY_INTERRUPTED_STATES, run=run, progress=progress)
+
+    def run_items(
+        self,
+        item_ids: Iterable[str | int],
+        *,
+        progress: ProgressCallback | None = None,
+        limit: int | None = None,
+    ) -> BatchSummary:
+        """Run exactly these items (job_id, page number or output file name).
+
+        Used by the GUI's "run selected": only runnable items (enabled WAITING or
+        INTERRUPTED) are executed - `DONE` and `SKIPPED` need an explicit
+        `reset_item()`, `ERROR` needs `retry_errors()`. An unknown id raises
+        QueueError, so a selection can never be silently dropped.
+        """
+        wanted = {self.find(item_id).job_id for item_id in item_ids}
+        selection = [item for item in self._selection(state.RUNNABLE_STATES) if item.job_id in wanted]
+        if limit:
+            selection = selection[:limit]
+        return self._run_selection(selection, progress=progress)
+
+    def reload(self, *, recover: bool = False) -> list[str]:
+        """Re-read state.json from disk (another process may have written it).
+
+        `recover=False` on purpose: while a worker of this process is running, the
+        `RUNNING` item belongs to that worker and must not be turned into
+        `INTERRUPTED`. Startup recovery stays in `open()` / the CLI.
+        """
+        self.document = state.load_state(
+            self.state_path,
+            job_root=self.project.root,
+            session_id=self.document.session_id,
+        )
+        self.quarantine_state()
+        return self.recover_running() if recover else []
 
     def skip_item(self, item_id: str | int, message: str = "Manuāli izlaists") -> state.QueueItem:
         """Mark one item SKIPPED (DONE must be reset first, RUNNING cannot be skipped)."""

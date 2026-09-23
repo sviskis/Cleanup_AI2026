@@ -624,6 +624,90 @@ def test_a_missing_per_page_template_only_breaks_that_page(project):
     assert json.loads(project.state_path.read_text(encoding="utf-8"))["items"][2]["state"] == state.ERROR
 
 
+def test_run_items_runs_only_the_selection_and_never_finished_pages(project):
+    adapter = FakeIllustrator(script={2: "error"})
+    batch = make_queue(project, adapter)
+    batch.build_queue(pages="1-4")
+
+    first = batch.run_items(["manual_p001", "manual__002.ai", 3])
+    assert adapter.pages_run() == [1, 2, 3]
+    assert states_of(batch)[:3] == [state.DONE, state.ERROR, state.DONE]
+
+    # a second pass over the same selection: DONE/SKIPPED stay, ERROR needs retry
+    again = batch.run_items([1, 2, 3])
+    assert again.outcomes == []
+    assert adapter.pages_run() == [1, 2, 3]
+
+    adapter.script[2] = None
+    retried = batch.retry_errors(run=True)
+    assert retried.summary is not None
+    assert batch.find("manual_p002").state == state.DONE
+    assert adapter.pages_run() == [1, 2, 3, 2]
+
+    with pytest.raises(queue.QueueError):
+        batch.run_items(["does_not_exist"])
+    assert first.counts["DONE"] == 2
+
+
+def test_reload_picks_up_state_written_by_another_process(project):
+    batch = make_queue(project, FakeIllustrator())
+    batch.build_queue(pages="1")
+    assert batch.find("manual_p001").state == state.WAITING
+
+    # another process (e.g. the CLI) marks the page DONE
+    other = make_queue(project, FakeIllustrator())
+    other.run_all_enabled(build_kwargs={"pages": "1"})
+    assert batch.find("manual_p001").state == state.WAITING  # this view is stale
+
+    batch.reload()
+    assert batch.find("manual_p001").state == state.DONE
+
+    # reload never recovers on its own: a RUNNING item stays RUNNING
+    other.document.items[0] = state.mark_running(other.document.items[0], "run-x")
+    other.save()
+    batch.reload()
+    assert batch.find("manual_p001").state == state.RUNNING
+    batch.reload(recover=True)
+    assert batch.find("manual_p001").state == state.INTERRUPTED
+
+
+def test_recovery_removes_only_the_partial_output_of_the_interrupted_attempt(project):
+    """A killed attempt must not leave a file that makes the retry SKIP."""
+    import os
+    import time as clock
+
+    batch = make_queue(project, FakeIllustrator())
+    batch.build_queue(pages="1-2")
+    outputs = {item.page: Path(item.output) for item in batch.items()}
+    for path in outputs.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"partial AI from the killed attempt")
+
+    # page 1: the output was written by the interrupted attempt (just now)
+    # page 2: an old, unrelated output that must survive
+    old = outputs[2]
+    old_stamp = clock.time() - 3600
+    os.utime(old, (old_stamp, old_stamp))
+
+    document = state.load_state(project.state_path)
+    for index, page in enumerate((1, 2)):
+        document.items[index] = state.mark_running(document.items[index], f"run-crash-{page}")
+    state.save_state(project.state_path, document)
+
+    fresh = make_queue(project, FakeIllustrator())
+    fresh.recover_running()
+
+    assert fresh.find("manual_p001").state == state.INTERRUPTED
+    assert fresh.find("manual_p002").state == state.INTERRUPTED
+    assert not outputs[1].exists()  # partial file of the killed attempt removed
+    assert old.is_file()  # older file kept (not ours)
+
+    # the retry of page 1 really processes the page again
+    result = fresh.retry_interrupted(run=True)
+    assert result.summary is not None
+    assert fresh.find("manual_p001").state == state.DONE
+
+
 def test_queue_modules_never_import_com():
     """The ADAPTER RULE: COM only lives in adapters/illustrator.py."""
     for name in ("queue.py", "state.py", "pagejob.py"):

@@ -15,6 +15,11 @@ Design rules from the approved plan:
 The adapter is deliberately usable with a fake "app" object (see
 pdf_ai_batch/tests/test_adapter_handshake.py), so the handshake can be tested
 without Illustrator.
+
+COM is apartment bound: every thread needs its own COM apartment, so the adapter
+initializes the current thread before using COM and drops a cached application
+object that belongs to another thread. The GUI relies on this - it runs every
+batch in a fresh worker thread.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from __future__ import annotations
 import logging
 import platform
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,6 +105,8 @@ class IllustratorAdapter:
         self.poll_interval = float(poll_interval)
         self.log = logger or logging.getLogger("pdf_ai_batch.illustrator")
         self._app: Any = None
+        self._app_thread: int | None = None
+        self._com_thread: int | None = None
         self.last_handshake: Handshake | None = None
 
     # ---------------------------------------------------------------- paths
@@ -123,6 +131,7 @@ class IllustratorAdapter:
 
     def _com_client(self):
         """Import win32com lazily so the rest of the tool has no hard dependency."""
+        self._prepare_thread()
         try:
             import win32com.client  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - depends on environment
@@ -131,16 +140,40 @@ class IllustratorAdapter:
             ) from exc
         return win32com.client
 
+    def _prepare_thread(self) -> None:
+        """Make the current thread COM ready (no-op when it already is).
+
+        COM is apartment bound: a thread that never called CoInitialize gets
+        "CoInitialize has not been called" on every COM call, and a proxy created in
+        another (already dead) thread gets "Object is not connected to server".
+        """
+        ident = threading.get_ident()
+        if self._com_thread == ident:
+            return
+        try:
+            import pythoncom  # type: ignore[import-not-found]
+        except ImportError as exc:  # pragma: no cover - depends on environment
+            raise IllustratorError(
+                "pywin32 nav instalēts (pip install pywin32) - COM nav pieejams"
+            ) from exc
+        try:
+            pythoncom.CoInitialize()
+        except Exception as exc:  # noqa: BLE001 - already initialised or unusable
+            self.log.debug("CoInitialize: %s", exc)
+        self._com_thread = ident
+
     def attach(self) -> bool:
         """Attach to a running Illustrator instance."""
         try:
             client = self._com_client()
             self._app = client.GetActiveObject(PROG_ID)
+            self._app_thread = threading.get_ident()
             self.log.info("Pievienojos jau atvērtam Illustrator")
             return True
         except Exception as exc:  # noqa: BLE001
             self.log.debug("Attach neizdevās: %s", exc)
             self._app = None
+            self._app_thread = None
             return False
 
     def launch(self, visible: bool = True, wait_seconds: float = 90.0) -> bool:
@@ -148,6 +181,7 @@ class IllustratorAdapter:
         try:
             client = self._com_client()
             self._app = client.Dispatch(PROG_ID)
+            self._app_thread = threading.get_ident()
             try:
                 self._app.Visible = bool(visible)
             except Exception:  # noqa: BLE001 - not fatal
@@ -163,14 +197,44 @@ class IllustratorAdapter:
         except Exception as exc:  # noqa: BLE001
             self.log.debug("Launch neizdevās: %s", exc)
             self._app = None
+            self._app_thread = None
             return False
 
     def ensure_app(self) -> bool:
-        """Attach first, launch only when needed."""
+        """Attach first, launch only when needed.
+
+        A cached application object is dropped when it is stale - the operator closed
+        Illustrator, it restarted, or the object belongs to another worker thread
+        (`_app_thread` None means the owner is unknown, e.g. an injected fake).
+        """
         self.ensure_runtime_dir()
-        if self._app is not None:
+        ident = threading.get_ident()
+        if self._app is not None and self._app_thread is not None and self._app_thread != ident:
+            self.log.info("Illustrator savienojums pieder citai pavedienai - pieslēdzos no jauna")
+            self._app = None
+            self._app_thread = None
+        try:
+            self._prepare_thread()
+        except IllustratorError as exc:
+            self.log.error("COM nav pieejams šajā pavedienā: %s", exc)
+            return False
+
+        if self._app is not None and self._is_alive():
             return True
+        self._app = None
+        self._app_thread = None
         return self.attach() or self.launch()
+
+    def _is_alive(self) -> bool:
+        """Cheap COM round trip; drops a dead connection."""
+        try:
+            _ = self._app.Name
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning("Illustrator savienojums vairs nav derīgs (%s) - pieslēdzos no jauna", exc)
+            self._app = None
+            self._app_thread = None
+            return False
 
     def is_available(self) -> bool:
         return self.ensure_app()
@@ -198,6 +262,11 @@ class IllustratorAdapter:
     def health_check(self) -> dict[str, Any]:
         """Everything a preflight needs to know about the Illustrator side."""
         cleanup = self.worker_jsx.parent / "cleanup.jsx"
+        try:
+            self._prepare_thread()
+        except IllustratorError as exc:  # noqa: BLE001 - reported as com_attached False
+            self.log.debug("Health check bez COM: %s", exc)
+        attached = self._app is not None and self._is_alive()
         report: dict[str, Any] = {
             "python": platform.python_version(),
             "worker_jsx": str(self.worker_jsx),
@@ -205,8 +274,8 @@ class IllustratorAdapter:
             "cleanup_jsx_exists": cleanup.is_file(),
             "runtime_dir": str(self.runtime_dir),
             "runtime_writable": _dir_writable(self.runtime_dir),
-            "com_attached": self._app is not None,
-            "illustrator": self.app_info().as_dict() if self._app is not None else {},
+            "com_attached": attached,
+            "illustrator": self.app_info().as_dict() if attached else {},
             "timeout_seconds": self.timeout,
         }
         report["ok"] = bool(
@@ -233,7 +302,7 @@ class IllustratorAdapter:
 
     def invoke_worker(self) -> None:
         """Tell Illustrator to run jsx/worker.jsx (no data through COM)."""
-        if self._app is None and not self.ensure_app():
+        if not self.ensure_app():  # also validates a cached, possibly stale, connection
             raise IllustratorError("Illustrator nav pieejams (COM)")
         if not self.worker_jsx.is_file():
             raise IllustratorError(f"worker.jsx nav atrasts: {self.worker_jsx}")

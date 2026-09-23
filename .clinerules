@@ -30,6 +30,15 @@ See `ARCHITECTURE.md` and `MIGRATION_PLAN.md`.
   non-ASCII BOM encoded (see `tools/README.md` "Encoding rule").
 - **Never overwrite the MASTER template.** Python copies `.ai` templates; for
   `.ait` the worker opens the template and saves **as** the output.
+- **The GUI is a presentation layer.** `pdf_ai_batch/gui/` contains no `win32com`,
+  no JSX and no direct `state.json`/`config.json` writes: widgets call
+  `gui/controller.py`, which calls `core/*` and - only for a health check or a run -
+  `adapters/illustrator.py`. Plan edits go through `config.json` +
+  `BatchQueue.build_queue`; every state transition goes through `core/queue.py`.
+- **The GUI never blocks on Illustrator and never launches it by accident.** Long
+  work runs in a `TaskRunner` worker thread and comes back through `queue.Queue` +
+  `root.after` (widgets are only touched in `_pump()`); opening the window keeps the
+  adapter lazy, so no COM call happens until a run or an explicit health check.
 - **Always close the source PDF without saving.**
 - **Outputs only go to `AI_OUT`.** Respect `overwrite` and `dryRun`.
 - Keep UTF-8 without BOM and LF line endings in JSX
@@ -51,7 +60,8 @@ ES3 syntax family as ExtendScript), scans for forbidden syntax, verifies every
 `PDC.<Module>.<member>` reference and checks the `jsx/` source encoding (ASCII
 only, no BOM, LF). `run_tests.ps1` runs the JSX unit tests plus the JSON contract
 tests. `pytest` covers all Python logic without Illustrator (including the
-absolute path contract and the encoding guards).
+absolute path contract, the encoding guards, the queue/state model and the GUI
+controller/task/window logic - the window test skips itself without a display).
 
 ## Workflow
 
@@ -60,7 +70,9 @@ absolute path contract and the encoding guards).
    `tools\migrate_extract_sections.ps1` (and `tools\freeze_legacy.ps1` for the
    frozen baseline). Hand written modules must never be overwritten by those.
 3. New Python logic goes to `pdf_ai_batch/core/*`, Illustrator work to `jsx/*`,
-   tests next to the code (`pdf_ai_batch/tests/`).
+   tests next to the code (`pdf_ai_batch/tests/`). GUI code goes to
+   `pdf_ai_batch/gui/*`: one tab or concern per module, `controller.py` stays free of
+   Tk and COM, and `main_window.py` stays a coordinator (never a 1500 line file).
 4. Test in Illustrator with a small JOB (1 PDF, 2-3 pages) before a real batch.
 5. Change behaviour? Document it in `CHANGELOG.md`, `STATUS.md` and, when the
    contract changes, in `ARCHITECTURE.md`.

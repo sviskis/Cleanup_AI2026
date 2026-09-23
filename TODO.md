@@ -20,13 +20,24 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
   INTERRUPTED, `RUNNING` recovered to `INTERRUPTED` after a restart, CONTINUE,
   retry errors, retry interrupted, skip/reset, per pass and per queue summaries.
   See `docs/QUEUE_STATE.md`.
+- [x] Tkinter GUI (`pdf_ai_batch/gui/`): PROJECT, PDF, MAPPING (ttk.Treeview with
+  USE / PAGE / TEMPLATE / LAYER / OUTPUT / STATUS), RUN / LOG with progress and the
+  live log, worker thread execution, close safety. See `docs/GUI.md`.
+- [x] Mapping actions: select all / none, enable / disable selected, auto assign
+  templates, assign template manually (double click or button), use default
+  template, refresh, reset selected, validate, run selected, run all enabled.
+- [x] Preflight report inside the GUI before RUN (same checks as
+  `core/validation.py`, shown in the MAPPING tab and enforced before every run).
+- [x] "Add PDF" and "Add templates" buttons + a template chooser that copies an
+  outside template into `JOB/TEMPLATE`.
 - [x] `DONE` only when the worker returned a matching `OK` **and** the output AI
   exists (enforced by `core/pagejob.output_ready` for both `run_one` and the queue).
 - [x] Batch summary at the end: DONE / SKIPPED / ERROR / INTERRUPTED counts plus
   aggregated statistics, written to the batch log.
 - [ ] Multi PDF queue in one run (each PDF with its own page plan).
-- [ ] "Stop after the current page" (now: Ctrl+C leaves a recoverable `RUNNING`
-  item for `--continue`).
+- [ ] "Stop after the current page" (now: close the GUI and press CONTINUE, or
+  Ctrl+C leaves a recoverable `RUNNING` item for `--continue`).
+- [ ] Remember the last JOB (and its active PDF) between GUI sessions.
 
 ## P2 - Improvements
 
@@ -34,17 +45,11 @@ Repository: `sviskis/Cleanup_AI2026` · local folder `Cleanup_AI2026` · display
       as in `jsx/` (`\uXXXX`), so the ScriptUI labels cannot be mis-decoded either.
       Deliberately out of scope for the contract milestone: `src/` is loaded by the
       GUI entry point, not by the Python worker.
-- [ ] Tkinter GUI (`pdf_ai_batch/gui/`): PROJECT, PDF, MAPPING (ttk.Treeview with
-      PAGE / USE / TEMPLATE / LAYER / OUTPUT / STATUS), RUN tabs with progress and
-      live log.
-- [ ] Mapping actions: select all / none / invert, enable / disable selected,
-      auto assign templates, assign template manually, move up / down, refresh,
-      validate config, run selected, run all enabled.
-- [ ] Richer `config.json` workflow: save/load per JOB, remember the last job,
-      "add PDF", "add templates" buttons.
-- [ ] Preflight report inside the GUI before RUN (same checks as
-      `core/validation.py`).
-- [ ] Worker heartbeat / progress for very slow pages (optional status file).
+- [ ] Move / up-down buttons for page rows in the MAPPING tab (currently: per page
+  template assignment only; layer and output come from the plan/config).
+- [ ] Worker heartbeat / progress for very slow pages (optional status file), so the
+  GUI can show intra page progress instead of "RUNNING".
+- [ ] Show the `JOB/ERROR` folder contents (project level error reports) in the GUI.
 
 ## P3 - Future ideas
 

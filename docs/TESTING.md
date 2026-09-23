@@ -55,7 +55,6 @@ See `MIGRATION_PLAN.md` §3 for the full procedure and what to replace first
 (real templates with an `ARTWORK` layer).
 
 ## 0b. The batch queue (milestone 2)
-
 ```powershell
 # 1. build the queue (JOB/CONFIG/state.json) for pages 1-4
 .venv\Scripts\python.exe -m pdf_ai_batch.batch --job temp\DEMO_JOB --build --pages 1-4
@@ -98,8 +97,40 @@ the state machine and the `state.json` schema are in `docs/QUEUE_STATE.md`. The
 automated driver used for the evidence is `temp/run_queue_batch_test.py`; it writes
 every CLI output to `temp/queue_test_logs/`.
 
-## 1. Automated checks
+## 0c. The GUI (milestone 3)
 
+`python app.py` opens the GUI; it is a view over the same core (see `docs/GUI.md`).
+
+Automated (no display needed except the window smoke test, which skips itself when
+Tk cannot open):
+
+```powershell
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_controller.py -q   # 17
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_tasks.py -q        # 6
+.venv\Scripts\python.exe -m pytest pdf_ai_batch/tests/test_gui_smoke.py -q        # 6
+```
+
+What they cover: project loading populates the model, PDF selection reports the page
+count from `pdf_info`, mapping rows come from plan + state, enable/disable and
+template assignment persist through `config.json`, DONE/SKIPPED are never rerun,
+retry errors / retry interrupted call the queue, progress derives from the state, the
+GUI sources contain no COM/JSX/state writes, worker events reach the log view and
+`on_close` warns when a page is RUNNING.
+
+Real acceptance (one Illustrator run, ~2 minutes, `temp/run_gui_acceptance.py`):
+
+1. open the real `temp/QUEUE_JOB` from the PROJECT tab,
+2. PDF tab: page count 14 (PyMuPDF), size, config status,
+3. MAPPING: 14 rows with the persisted states,
+4. RESET SELECTED on 3 pages + a manual template change on one page,
+5. VALIDATE: 24 checks, 0 errors,
+6. RUN SELECTED: watch `WAITING -> RUNNING -> DONE` for each page,
+7. force an ERROR (hold the output file open) and press RETRY ERRORS: `ERROR ->
+   WAITING -> RUNNING -> DONE`,
+8. close the window, open a new one: states restored,
+9. verify `Illustrator.Application.Documents.Count == 0`.
+
+## 1. Automated checks
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\check_jsx.ps1
 powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1

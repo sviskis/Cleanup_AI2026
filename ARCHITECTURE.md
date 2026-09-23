@@ -64,6 +64,24 @@ snapshot, and `archive/original/` holds the predecessors.
 Illustrator is **never** asked how many pages a PDF has, and Python never touches
 the Illustrator DOM.
 
+The **GUI** (`pdf_ai_batch/gui/`) is a presentation layer on top of the same core:
+
+```
+tk widget  ->  GuiContext  ->  AppController  ->  core/*  (+ adapters/illustrator.py
+                                                 only for a health check or a run)
+```
+
+* no COM, no JSX and no direct `state.json`/`config.json` writes in `gui/`
+* long work in a `TaskRunner` worker thread, UI updates through `queue.Queue` +
+  `root.after` (widgets are only touched in `_pump()`)
+* plan edits go to `CONFIG/config.json` and are merged into `state.json` by
+  `BatchQueue.build_queue`; RESET/RETRY/CONTINUE are core queue transitions
+* progress and the status column derive from `state.json`, never from a GUI counter
+* opening the window does not launch Illustrator (the adapter is lazy; the
+  Illustrator check only appears in `validate()` after an explicit health check)
+
+Details: [docs/GUI.md](docs/GUI.md).
+
 ## 2. The JSON contract
 
 Two files in `runtime/` (both written atomically: temp file + rename):
@@ -236,7 +254,8 @@ handling arrives with the queue milestone).
    and used by both entry points (the worker and the legacy app).
 2. `src/` is the legacy ScriptUI application; it holds **no copy** of the cleanup
    engine - it includes `../jsx/cleanup.jsx`.
-3. Python owns orchestration; the JSX worker owns Illustrator.
+3. Python owns orchestration; the JSX worker owns Illustrator. The GUI adds no
+   fourth copy of anything: it only calls the core (`gui/controller.py`).
 4. Everything exchanged is JSON, defined in `pdf_ai_batch/core/contract.py` and
    mirrored by `jsx/cleanup.jsx` (`statsToContract`) and `jsx/worker.jsx`.
 
@@ -244,6 +263,8 @@ handling arrives with the queue milestone).
 
 | Document | Content |
 | --- | --- |
+| [docs/QUEUE_STATE.md](docs/QUEUE_STATE.md) | the persistent queue, state machine, CLI and recovery |
+| [docs/GUI.md](docs/GUI.md) | the Tkinter GUI: layers, threading, tabs, validation, acceptance |
 | [MIGRATION_PLAN.md](MIGRATION_PLAN.md) | the approved migration plan, its status and what is next |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | the legacy single-file JSX application (phase 1) |
 | [docs/CODE_ANALYSIS.md](docs/CODE_ANALYSIS.md) | the original reference script, function by function |
