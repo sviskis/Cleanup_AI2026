@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------------------
+# PDF Deep Cleanup AI 2026 - line endings and diff behaviour
+# ---------------------------------------------------------------------------
+# Illustrator ExtendScript reads the script files as UTF-8 and the reference
+# scripts use LF line endings, so every source file is stored with LF and
+# checked out with LF on all platforms. This keeps Windows and macOS /
+# GitHub diffs identical.
+# ---------------------------------------------------------------------------
+
+* text=auto eol=lf
+
+*.jsx text eol=lf
+*.js  text eol=lf
+*.ps1 text eol=lf
+*.md  text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+
+# binary files must never be line ending converted
+*.pdf binary
+*.ai  binary
+*.ait binary
+*.png binary
+*.jpg binary
+*.zip binary
+
+# collapse generated reference bundles in diffs
+temp/* linguist-generated=true

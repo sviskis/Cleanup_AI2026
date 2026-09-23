@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Reference copy of the runtime configuration in src/config/Config.jsx.",
+    "ExtendScript cannot read JSON without JSON.parse, so the script itself always",
+    "uses src/config/Config.jsx. This file exists for humans, for tooling and for a",
+    "future Python/COM layer that wants to read or write the same defaults.",
+    "When you change a value here, change it in Config.jsx as well."
+  ],
+  "projectName": "PDF Deep Cleanup AI 2026",
+  "appName": "PDF Deep Cleanup \u2192 AI Template Batch",
+  "version": "0.1.0",
+
+  "debug": false,
+  "dryRun": false,
+  "overwriteExisting": false,
+  "clearArtworkByDefault": true,
+
+  "artworkLayerName": "ARTWORK",
+  "visiblePageRows": 9,
+  "maxPdfScanDepth": 8,
+  "excludedScanFolders": ["template", "ai_out", "log", "error", "errors", "archive"],
+
+  "folders": {
+    "input": "PDF",
+    "template": "TEMPLATE",
+    "config": "CONFIG",
+    "output": "AI_OUT",
+    "temp": "TEMP",
+    "logs": "LOG",
+    "errors": "ERROR"
+  },
+
+  "log": {
+    "level": "INFO",
+    "sessionFileName": "project.log",
+    "jobFilePrefix": "batch",
+    "errorReportFolder": "errors"
+  },
+
+  "cleanup": {
+    "preserveImageStructures": true,
+    "preserveTransparencyStructures": true,
+    "releaseSafeVectorMasks": true,
+    "deleteCropMarks": true,
+    "ungroupPasses": 40
+  },
+
+  "defaultJobFolder": ""
+}

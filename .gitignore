@@ -1,0 +1,43 @@
+# ---------------------------------------------------------------------------
+# PDF Deep Cleanup AI 2026 - files that must not enter version control
+# ---------------------------------------------------------------------------
+
+# runtime output (the folders themselves are re created by the script/tools)
+logs/*
+temp/*
+output/*
+*.log
+*.tmp
+
+# keep the folder markers and documentation of ignored runtime folders
+!logs/.gitkeep
+!logs/README.md
+
+# Illustrator / system junk
+*.bak
+*.autosave
+*.ai.bak
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# editors / environment
+.vscode/settings.json
+.idea/
+.env
+secrets.*
+
+# ---------------------------------------------------------------------------
+# Legacy working copies kept in the project root.
+# Byte identical copies (SHA256 verified) are committed under archive/original/,
+# see archive/original/ARCHIVE_MANIFEST.md. They stay on disk untouched so the
+# original reference script is always available next to the new project.
+# Remove these two lines if you want the loose copies tracked as well.
+# ---------------------------------------------------------------------------
+/PDF_Deep_Cleanup_AI_Template_BATCH.jsx
+/PDF_Deep_Cleanup_AI_Template_BATCH/
+
+# product files must never be committed (they are the reason the tool exists)
+*.pdf
+*.indd
+*.idml
