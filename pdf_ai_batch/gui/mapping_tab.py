@@ -19,6 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from ..core import state
+from . import shell, theme
 from .bulk_dialogs import (
     DEFAULT_CHOICE,
     PresetDialog,
@@ -30,17 +31,11 @@ from .controller import ControllerError, MappingRow
 from .context import GuiContext
 from .preview_panel import PreviewPanel
 
-STATE_COLOURS = {
-    state.DONE: "#1a7f37",
-    state.ERROR: "#b00020",
-    state.INTERRUPTED: "#a15c00",
-    state.SKIPPED: "#555555",
-    state.RUNNING: "#0b5cad",
-    state.WAITING: "#111111",
-}
+#: the state colours come from the one palette (`gui/theme.py`), never from here
+STATE_COLOURS = theme.state_colours()
 
 
-class TemplateChooser(tk.Toplevel):
+class TemplateChooser(theme.Toplevel):
     """Modal template chooser: lists the files already inside JOB/TEMPLATE.
 
     `result` is the chosen file name, "" for "use the default template" or None when
@@ -67,25 +62,32 @@ class TemplateChooser(tk.Toplevel):
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
-        ttk.Label(
+        theme.Label(
             self,
             text=f"Template faili mapē JOB/TEMPLATE (noklusētais: {default_name or '(nav)'})",
-        ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 6))
 
-        self.listbox = tk.Listbox(self, height=10, width=46, exportselection=False)
-        self.listbox.grid(row=1, column=0, sticky="nsew", padx=10)
+        self.listbox = theme.ListBox(self, height=10, width=46)
+        self.listbox.grid(row=1, column=0, sticky="nsew", padx=12)
         self.listbox.bind("<Double-1>", lambda _event: self._accept())
         self._fill(current)
 
-        buttons = ttk.Frame(self, padding=10)
-        buttons.grid(row=2, column=0, sticky="ew")
+        buttons = theme.Frame(self)
+        buttons.grid(row=2, column=0, sticky="ew", padx=12, pady=12)
         for index in range(3):
             buttons.columnconfigure(index, weight=1)
-        ttk.Button(buttons, text="LABI", command=self._accept).grid(row=0, column=0, sticky="ew", padx=2)
-        ttk.Button(buttons, text="ATCAUKT", command=self._cancel).grid(row=0, column=1, sticky="ew", padx=2)
-        ttk.Button(buttons, text="PĀRLŪKOT...", command=self._browse).grid(row=0, column=2, sticky="ew", padx=2)
+        theme.Button(buttons, text="LABI", kind="primary", command=self._accept).grid(
+            row=0, column=0, sticky="ew", padx=2
+        )
+        theme.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
+            row=0, column=1, sticky="ew", padx=2
+        )
+        theme.Button(buttons, text="PĀRLŪKOT...", command=self._browse).grid(
+            row=0, column=2, sticky="ew", padx=2
+        )
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self._select(current)
+
 
     def _fill(self, current: str) -> None:
         self.listbox.delete(0, tk.END)
@@ -132,7 +134,7 @@ class TemplateChooser(tk.Toplevel):
         self.destroy()
 
 
-class MappingTab(ttk.Frame):
+class MappingTab(theme.Frame):
     """The page plan table and its actions."""
 
     #: replaced by tests so the chooser can be answered without a user
@@ -143,11 +145,12 @@ class MappingTab(ttk.Frame):
     preset_dialog_factory: type[PresetDialog] = PresetDialog
     snapshot_dialog_factory: type[SnapshotDialog] = SnapshotDialog
 
-    def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
-        super().__init__(parent, padding=8)
+    def __init__(self, parent: Any, context: GuiContext) -> None:
+        super().__init__(parent)
         self.ctx = context
         self._rows: list[MappingRow] = []
-        self._buttons: list[ttk.Button] = []
+        self._buttons: list[Any] = []
+        self._busy = False  # the last value pushed to the buttons (a no-op is skipped)
         #: the visual page browser (thumbnails + preview); None without a loader
         self.preview_panel: PreviewPanel | None = None
         self._build()
@@ -159,39 +162,39 @@ class MappingTab(ttk.Frame):
         self.rowconfigure(4, weight=1)
 
         #: which document this table edits - plan edits never leak into another PDF
-        self.document_label = ttk.Label(self, text="PDF: -", font=("Segoe UI", 10, "bold"))
+        self.document_label = theme.Heading(self, text="PDF: -")
         self.document_label.grid(row=0, column=0, sticky="w", pady=(0, 4))
-        self.document_detail = ttk.Label(self, text="", foreground="#444")
-        self.document_detail.grid(row=1, column=0, sticky="w", pady=(0, 4))
+        self.document_detail = theme.Label(self, text="")
+        self.document_detail.grid(row=1, column=0, sticky="w", pady=(0, 6))
 
-        bar = ttk.Frame(self)
+        bar = theme.Frame(self)
         bar.grid(row=2, column=0, sticky="ew")
         for index in range(6):
             bar.columnconfigure(index, weight=1)
         actions = (
-            ("SELECT ALL", self.on_select_all, 0, 0),
-            ("SELECT NONE", self.on_select_none, 0, 1),
-            ("ENABLE SELECTED", self.on_enable, 0, 2),
-            ("DISABLE SELECTED", self.on_disable, 0, 3),
-            ("RESET SELECTED", self.on_reset, 0, 4),
-            ("VALIDATE", self.on_validate, 0, 5),
-            ("ASSIGN TO SELECTED", self.on_assign_template, 1, 0),
-            ("ASSIGN TO RANGE", self.on_assign_range, 1, 1),
-            ("USE DEFAULT", self.on_use_default, 1, 2),
-            ("CLEAR OVERRIDE", self.on_clear_override, 1, 3),
-            ("AUTO MAP BY NUMBER", self.on_auto_map_number, 1, 4),
-            ("REFRESH", self.on_refresh, 1, 5),
-            ("COPY MAPPING", self.on_copy_mapping, 2, 0),
-            ("PASTE MAPPING", self.on_paste_mapping, 2, 1),
-            ("SAVE PRESET", self.on_save_preset, 2, 2),
-            ("LOAD / APPLY PRESET", self.on_apply_preset, 2, 3),
-            ("AUTO ASSIGN TEMPLATES", self.on_auto_assign, 2, 4),
-            ("RECONCILE PDF", self.on_reconcile, 3, 0),
-            ("UNDO PLAN CHANGE", self.on_undo, 3, 1),
-            ("RESTORE SNAPSHOT", self.on_restore, 3, 2),
+            ("SELECT ALL", self.on_select_all, 0, 0, "ghost"),
+            ("SELECT NONE", self.on_select_none, 0, 1, "ghost"),
+            ("ENABLE SELECTED", self.on_enable, 0, 2, "ghost"),
+            ("DISABLE SELECTED", self.on_disable, 0, 3, "ghost"),
+            ("RESET SELECTED", self.on_reset, 0, 4, "ghost"),
+            ("VALIDATE", self.on_validate, 0, 5, "primary"),
+            ("ASSIGN TO SELECTED", self.on_assign_template, 1, 0, "primary"),
+            ("ASSIGN TO RANGE", self.on_assign_range, 1, 1, "ghost"),
+            ("USE DEFAULT", self.on_use_default, 1, 2, "ghost"),
+            ("CLEAR OVERRIDE", self.on_clear_override, 1, 3, "ghost"),
+            ("AUTO MAP BY NUMBER", self.on_auto_map_number, 1, 4, "ghost"),
+            ("REFRESH", self.on_refresh, 1, 5, "ghost"),
+            ("COPY MAPPING", self.on_copy_mapping, 2, 0, "ghost"),
+            ("PASTE MAPPING", self.on_paste_mapping, 2, 1, "ghost"),
+            ("SAVE PRESET", self.on_save_preset, 2, 2, "ghost"),
+            ("LOAD / APPLY PRESET", self.on_apply_preset, 2, 3, "ghost"),
+            ("AUTO ASSIGN TEMPLATES", self.on_auto_assign, 2, 4, "ghost"),
+            ("RECONCILE PDF", self.on_reconcile, 3, 0, "ghost"),
+            ("UNDO PLAN CHANGE", self.on_undo, 3, 1, "ghost"),
+            ("RESTORE SNAPSHOT", self.on_restore, 3, 2, "ghost"),
         )
-        for label, handler, row, column in actions:
-            button = ttk.Button(bar, text=label, command=handler)
+        for label, handler, row, column, kind in actions:
+            button = theme.Button(bar, text=label, kind=kind, command=handler)
             button.grid(row=row, column=column, sticky="ew", padx=2, pady=2)
             self._buttons.append(button)
 
@@ -200,10 +203,10 @@ class MappingTab(ttk.Frame):
             self.preview_panel = PreviewPanel(self, self.ctx, loader)
             self.preview_panel.on_select_pages = self.on_preview_select
             self.preview_panel.on_action = self.on_preview_action
-            self.preview_panel.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+            self.preview_panel.grid(row=3, column=0, sticky="ew", pady=(6, 0))
 
         columns = ("use", "page", "template", "layer", "output", "status")
-        frame = ttk.Frame(self)
+        frame = theme.Frame(self)
         frame.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
@@ -222,29 +225,30 @@ class MappingTab(ttk.Frame):
         for name, colour in STATE_COLOURS.items():
             self.tree.tag_configure(name, foreground=colour)
         self.tree.grid(row=0, column=0, sticky="nsew")
-        vscroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        vscroll = theme.Scrollbar(frame, orientation="vertical", command=self.tree.yview)
         vscroll.grid(row=0, column=1, sticky="ns")
-        hscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        hscroll = theme.Scrollbar(frame, orientation="horizontal", command=self.tree.xview)
         hscroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<<TreeviewSelect>>", self._on_selection)
-        self.tree.tag_configure("disabled", background="#f2f2f2")
+        self.tree.tag_configure(
+            "disabled", background=theme.COLORS["card_alt"], foreground=theme.COLORS["muted"]
+        )
 
-        bottom = ttk.Frame(self)
+        bottom = theme.Frame(self)
         bottom.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         bottom.columnconfigure(0, weight=1)
-        self.detail = ttk.Label(bottom, text="", foreground="#444", wraplength=900, justify="left")
+        self.detail = theme.Label(bottom, text="", wraplength=900, justify="left")
         self.detail.grid(row=0, column=0, sticky="w")
 
-        panel = ttk.LabelFrame(self, text="Pārbaudes (core/validation)")
+        panel = shell.TitledCard(self, title="Pārbaudes (core/validation)")
         panel.grid(row=6, column=0, sticky="ew", pady=(8, 0))
-        panel.columnconfigure(0, weight=1)
-        self.report = tk.Text(panel, height=5, wrap="none", state="disabled")
+        panel_body = panel.body
+        panel_body.columnconfigure(0, weight=1)
+        self.report = theme.Text(panel_body, height=5, wrap="none")
         self.report.grid(row=0, column=0, sticky="ew")
-        report_scroll = ttk.Scrollbar(panel, orient="vertical", command=self.report.yview)
-        report_scroll.grid(row=0, column=1, sticky="ns")
-        self.report.configure(yscrollcommand=report_scroll.set)
+        self.report.configure(state="disabled")
 
     # ------------------------------------------------------------------ helpers
 
@@ -749,8 +753,16 @@ class MappingTab(ttk.Frame):
             self._set_report(self.ctx.controller.validation_report())
 
     def set_busy(self, busy: bool) -> None:
-        """While a batch runs, plan edits are disabled (the worker owns state.json)."""
-        for button in self._buttons:
-            button.configure(state="disabled" if busy else "normal")
+        """While a batch runs, plan edits are disabled (the worker owns state.json).
+
+        An unchanged value skips the button redraw only: `preview_panel.set_busy()`
+        below stays unconditional, because that panel also writes its own button
+        state and depends on the pump to correct it.
+        """
+        busy = bool(busy)
+        if self._busy != busy:
+            self._busy = busy
+            for button in self._buttons:
+                button.configure(state="disabled" if busy else "normal")
         if self.preview_panel is not None:
             self.preview_panel.set_busy(busy)

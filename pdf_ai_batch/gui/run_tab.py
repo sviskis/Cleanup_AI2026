@@ -1,28 +1,34 @@
-"""RUN / LOG tab: batch execution, progress and the live log view.
+"""RUN / LOG section: batch execution, progress and the live log view.
 
-The batch itself runs in a worker thread (see `gui/tasks.py`); this tab only starts
-tasks and renders events. Progress comes from `AppController.progress()`, i.e. from
-the queue state - the GUI keeps no counter of its own.
+The batch itself runs in a worker thread (see `gui/tasks.py`); this section only starts
+tasks and renders events. Progress comes from `AppController.progress()`, i.e. from the
+queue state - the GUI keeps no counter of its own.
+
+The widgets are built from `gui/theme.py` (dark) and `gui/shell.py` (cards); the same
+handlers are also reachable from the right action panel (`loop` / `monitoring`).
 """
 
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 from typing import Any
 
 from ..core.queue import BatchSummary
+from . import shell, theme
 from .controller import ControllerError
 from .context import GuiContext
 
 
-class RunTab(ttk.Frame):
+class RunTab(theme.Frame):
     """Left: the run actions. Right: progress. Bottom: the live log."""
 
-    def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
-        super().__init__(parent, padding=8)
+    def __init__(self, parent: Any, context: GuiContext) -> None:
+        super().__init__(parent)
         self.ctx = context
-        self._buttons: list[ttk.Button] = []
+        self._buttons: list[Any] = []
+        self._busy = False  # the last value pushed to the buttons (a no-op is skipped)
+        self._busy_text = ""  # the last label text pushed to the busy label
         #: wired by MainWindow: the MAPPING tab's selection (job ids)
         self.selection_provider = None
         self._build()
@@ -33,74 +39,71 @@ class RunTab(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        top = ttk.Frame(self)
+        top = theme.Frame(self)
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
         top.columnconfigure(1, weight=2)
+        top.rowconfigure(0, weight=1)
 
-        actions = ttk.LabelFrame(top, text="Darbības")
+        actions = shell.TitledCard(top, title="Darbības")
         actions.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        actions.columnconfigure(0, weight=1)
         specs = (
-            ("RUN SELECTED", self.on_run_selected),
-            ("RUN CURRENT PDF", self.on_run_current),
-            ("RUN ALL ENABLED PDFs", self.on_run_all),
-            ("CONTINUE PROJECT", self.on_continue),
-            ("RETRY PROJECT ERRORS", self.on_retry_errors),
-            ("RETRY INTERRUPTED", self.on_retry_interrupted),
-            ("REFRESH STATUS", self.on_refresh),
-            ("HEALTH CHECK", self.on_health),
-            ("PREFLIGHT PROJECT", self.on_preflight),
+            ("RUN SELECTED", self.on_run_selected, "accent"),
+            ("RUN CURRENT PDF", self.on_run_current, "primary"),
+            ("RUN ALL ENABLED PDFs", self.on_run_all, "primary"),
+            ("CONTINUE PROJECT", self.on_continue, "ghost"),
+            ("RETRY PROJECT ERRORS", self.on_retry_errors, "ghost"),
+            ("RETRY INTERRUPTED", self.on_retry_interrupted, "ghost"),
+            ("REFRESH STATUS", self.on_refresh, "ghost"),
+            ("HEALTH CHECK", self.on_health, "ghost"),
+            ("PREFLIGHT PROJECT", self.on_preflight, "primary"),
         )
-        for index, (label, handler) in enumerate(specs):
-            button = ttk.Button(actions, text=label, command=handler)
-            button.grid(row=index, column=0, sticky="ew", pady=2, padx=2)
+        for label, handler, kind in specs:
+            button = theme.Button(actions.body, text=label, kind=kind, command=handler)
+            button.grid(row=len(self._buttons), column=0, sticky="ew", pady=2)
             self._buttons.append(button)
 
-        self.overwrite_var = tk.BooleanVar(value=self.ctx.controller.overwrite_outputs)
-        overwrite = ttk.Checkbutton(
-            actions,
+        self.overwrite_var = tk.BooleanVar(master=self, value=self.ctx.controller.overwrite_outputs)
+        overwrite = theme.CheckBox(
+            actions.body,
             text="Pārrakstīt esošos AI (overwrite)",
             variable=self.overwrite_var,
             command=self.on_overwrite_toggle,
         )
-        overwrite.grid(row=len(specs), column=0, sticky="w", padx=2, pady=(8, 2))
+        overwrite.grid(row=len(self._buttons), column=0, sticky="w", pady=(10, 2))
         self._buttons.append(overwrite)
 
-        progress = ttk.LabelFrame(top, text="Progress")
+        progress = shell.TitledCard(top, title="Progress")
         progress.grid(row=0, column=1, sticky="nsew")
-        progress.columnconfigure(0, weight=1)
-        self.current = ttk.Label(progress, text="Lapas --- / ---", font=("Segoe UI", 14, "bold"))
-        self.current.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
-        self.progressbar = ttk.Progressbar(progress, maximum=1000, mode="determinate")
-        self.progressbar.grid(row=1, column=0, sticky="ew", padx=10)
-        self.counts = ttk.Label(progress, text="", justify="left")
-        self.counts.grid(row=2, column=0, sticky="w", padx=10, pady=(8, 4))
-        ttk.Label(progress, text="Dokumenti:", foreground="#444").grid(
-            row=3, column=0, sticky="w", padx=10
-        )
-        self.documents = ttk.Label(progress, text="", justify="left", foreground="#444")
-        self.documents.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 8))
-        self.busy_label = ttk.Label(progress, text="", foreground="#0b5cad")
-        self.busy_label.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 8))
+        body = progress.body
+        body.columnconfigure(0, weight=1)
+        self.current = theme.Title(body, text="Lapas --- / ---")
+        self.current.grid(row=0, column=0, sticky="w", padx=8, pady=(4, 6))
+        self.progressbar = theme.ProgressBar(body)
+        self.progressbar.grid(row=1, column=0, sticky="ew", padx=8)
+        self.counts = theme.Label(body, text="", justify="left")
+        self.counts.grid(row=2, column=0, sticky="w", padx=8, pady=(8, 4))
+        theme.Muted(body, text="Dokumenti:").grid(row=3, column=0, sticky="w", padx=8)
+        self.documents = theme.Label(body, text="", justify="left")
+        self.documents.grid(row=4, column=0, sticky="w", padx=8, pady=(0, 8))
+        self.busy_label = theme.Label(body, text="", text_color=theme.COLORS["accent"])
+        self.busy_label.grid(row=5, column=0, sticky="w", padx=8, pady=(0, 8))
 
-        self.preflight = ttk.Label(
-            progress,
+        self.preflight = theme.Label(
+            body,
             text="PREFLIGHT PROJECT: nav pārbaudīts",
             justify="left",
-            foreground="#444",
+            text_color=theme.COLORS["muted"],
         )
-        self.preflight.grid(row=6, column=0, sticky="w", padx=10, pady=(0, 8))
+        self.preflight.grid(row=6, column=0, sticky="w", padx=8, pady=(0, 8))
 
-        log_frame = ttk.LabelFrame(self, text="Log (skats; kanoniskie logi ir JOB/LOG)")
-        log_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        self.log = tk.Text(log_frame, height=14, wrap="none", state="disabled")
+        log_card = shell.TitledCard(self, title="Log (skats; kanoniskie logi ir JOB/LOG)")
+        log_card.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        log_body = log_card.body
+        log_body.columnconfigure(0, weight=1)
+        log_body.rowconfigure(0, weight=1)
+        self.log = theme.Text(log_body, height=14, wrap="none")
         self.log.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.log.configure(yscrollcommand=scroll.set)
 
     # ------------------------------------------------------------------ helpers
 
@@ -112,13 +115,24 @@ class RunTab(ttk.Frame):
         self.log.configure(state="disabled")
 
     def set_busy(self, busy: bool, label: str = "") -> None:
+        """Lock the run actions; an unchanged call only redraws nothing.
+
+        The label text is cached next to the value, so a new task's text is never
+        skipped (the window calls this from its pump every 120 ms).
+        """
+        busy = bool(busy)
+        text = label if busy else ""
+        if self._busy == busy and self._busy_text == text:
+            return
+        self._busy = busy
+        self._busy_text = text
         for button in self._buttons:
             if not busy:
                 button.configure(state="normal")
                 continue
             # only REFRESH STATUS stays usable while a batch runs (it is a plain read)
             button.configure(state="normal" if str(button["text"]) == "REFRESH STATUS" else "disabled")
-        self.busy_label.configure(text=label if busy else "")
+        self.busy_label.configure(text=text)
 
     def _start(self, label: str, task) -> None:
         try:
@@ -208,7 +222,11 @@ class RunTab(ttk.Frame):
         self.ctx.controller.overwrite_outputs = bool(self.overwrite_var.get())
         self.ctx.report(
             "Pārrakstīt esošos AI: "
-            + ("JĀ - RESET lapas tiks apstrādātas no jauna" if self.ctx.controller.overwrite_outputs else "NĒ")
+            + (
+                "JĀ - RESET lapas tiks apstrādātas no jauna"
+                if self.ctx.controller.overwrite_outputs
+                else "NĒ"
+            )
         )
 
     def on_health(self) -> None:
@@ -226,6 +244,7 @@ class RunTab(ttk.Frame):
             lambda progress: self.ctx.controller.preflight_project(check_illustrator=True),
         ):
             self.ctx.report("Notiek cits darbs, nogaidi.", error=True)
+
 
     def show_preflight(self, result) -> None:
         """Render the preflight report (called by the window after the task)."""
@@ -279,3 +298,4 @@ class RunTab(ttk.Frame):
         self.append_log(("OK: " if ok else "KĻŪDA: ") + message)
         self.ctx.report(message, error=not ok)
         self.update_progress()
+

@@ -1,4 +1,8 @@
-"""PROJECT tab: create/open a JOB, add PDFs and templates, show the folders."""
+"""PROJECT section: create/open a JOB, add PDFs and templates, show the folders.
+
+The dark shell version (see `gui/theme.py`): the six JOB folders in a card, the project
+actions in a labelled card (and again in the right action panel).
+"""
 
 from __future__ import annotations
 
@@ -6,40 +10,44 @@ import os
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any
 
+from . import shell, theme
 from .controller import ControllerError
 from .context import GuiContext
 
 
-class ProjectTab(ttk.Frame):
+class ProjectTab(theme.Frame):
     """Left: the six JOB folders. Right: the project actions."""
 
-    def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
-        super().__init__(parent, padding=8)
+    def __init__(self, parent: Any, context: GuiContext) -> None:
+        super().__init__(parent)
         self.ctx = context
-        self._buttons: list[ttk.Button] = []
+        self._buttons: list[Any] = []
+        self._busy = False  # the last value pushed to the buttons (a no-op is skipped)
         self._build()
 
     # ------------------------------------------------------------------ widgets
 
     def _build(self) -> None:
-        self.columnconfigure(0, weight=1)
+        self.columnconfigure(0, weight=3)
+        self.columnconfigure(1, weight=1)
         self.rowconfigure(1, weight=1)
 
-        header = ttk.Frame(self)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        header = theme.Card(self)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
-        ttk.Label(header, text="JOB:").grid(row=0, column=0, sticky="w")
-        self.job_label = ttk.Label(header, text="(nav atvērts)", foreground="#444")
-        self.job_label.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        theme.Label(header, text="JOB:", text_color=theme.COLORS["muted"]).grid(
+            row=0, column=0, sticky="w", padx=(12, 6), pady=10
+        )
+        self.job_label = theme.Body(header, text="(nav atvērts)")
+        self.job_label.grid(row=0, column=1, sticky="w", padx=(0, 12), pady=10)
 
-        panes = ttk.Panedwindow(self, orient="horizontal")
-        panes.grid(row=1, column=0, sticky="nsew")
-
-        table_frame = ttk.Frame(panes)
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
+        table_card = shell.TitledCard(self, title="JOB mapes")
+        table_card.grid(row=1, column=0, sticky="nsew")
+        table_body = table_card.body
+        table_body.columnconfigure(0, weight=1)
+        table_body.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(
-            table_frame, columns=("folder", "state", "path"), show="headings", height=10
+            table_body, columns=("folder", "state", "path"), show="headings", height=10
         )
         self.tree.heading("folder", text="MAPE")
         self.tree.heading("state", text="STĀVOKLIS")
@@ -47,32 +55,30 @@ class ProjectTab(ttk.Frame):
         self.tree.column("folder", width=110, anchor="w", stretch=False)
         self.tree.column("state", width=90, anchor="center", stretch=False)
         self.tree.column("path", width=480, anchor="w")
-        self.tree.tag_configure("missing", foreground="#b00020")
+        self.tree.tag_configure("missing", foreground=theme.COLORS["red"])
         self.tree.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        scroll = theme.Scrollbar(table_body, orientation="vertical", command=self.tree.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scroll.set)
-        panes.add(table_frame, weight=3)
 
-        buttons = ttk.Frame(panes, padding=(10, 0, 0, 0))
+        actions_card = shell.TitledCard(self, title="Darbības")
+        actions_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
+        buttons = actions_card.body
         buttons.columnconfigure(0, weight=1)
         specs = (
-            ("NEW PROJECT", self.on_new_project),
-            ("OPEN PROJECT", self.on_open_project),
-            ("ADD PDF", self.on_add_pdf),
-            ("ADD TEMPLATES", self.on_add_templates),
-            ("OPEN JOB FOLDER", self.on_open_folder),
+            ("NEW PROJECT", self.on_new_project, "primary"),
+            ("OPEN PROJECT", self.on_open_project, "primary"),
+            ("ADD PDF", self.on_add_pdf, "ghost"),
+            ("ADD TEMPLATES", self.on_add_templates, "ghost"),
+            ("OPEN JOB FOLDER", self.on_open_folder, "ghost"),
         )
-        for index, (label, handler) in enumerate(specs):
-            button = ttk.Button(buttons, text=label, command=handler)
-            button.grid(row=index, column=0, sticky="ew", pady=3)
+        for label, handler, kind in specs:
+            button = theme.Button(buttons, text=label, kind=kind, command=handler)
+            button.grid(row=len(self._buttons), column=0, sticky="ew", pady=2)
             self._buttons.append(button)
-        ttk.Separator(buttons, orient="horizontal").grid(
-            row=len(specs), column=0, sticky="ew", pady=8
-        )
-        self.summary = ttk.Label(buttons, text="", justify="left", foreground="#444")
-        self.summary.grid(row=len(specs) + 1, column=0, sticky="w")
-        panes.add(buttons, weight=1)
+        theme.Divider(buttons).grid(row=len(self._buttons), column=0, sticky="ew", pady=10)
+        self.summary = theme.Label(buttons, text="", justify="left")
+        self.summary.grid(row=len(self._buttons) + 1, column=0, sticky="w")
 
     # ------------------------------------------------------------------ actions
 
@@ -148,11 +154,11 @@ class ProjectTab(ttk.Frame):
         project = self.ctx.controller.project
         self.tree.delete(*self.tree.get_children())
         if project is None:
-            self.job_label.configure(text="(nav atvērts)", foreground="#444")
+            self.job_label.configure(text="(nav atvērts)", text_color=theme.COLORS["muted"])
             self.summary.configure(text="")
             return
 
-        self.job_label.configure(text=str(project.root), foreground="#111")
+        self.job_label.configure(text=str(project.root), text_color=theme.COLORS["text"])
         for label, path, exists in self.ctx.controller.project_folders():
             self.tree.insert(
                 "",
@@ -166,6 +172,15 @@ class ProjectTab(ttk.Frame):
         )
 
     def set_busy(self, busy: bool) -> None:
-        """While a batch runs, mutating JOB actions are disabled."""
+        """While a batch runs, mutating JOB actions are disabled.
+
+        An unchanged value returns immediately: every `configure()` on a CTkButton is
+        a full redraw and the window's pump calls this every 120 ms.
+        """
+        busy = bool(busy)
+        if self._busy == busy:
+            return
+        self._busy = busy
         for button in self._buttons:
             button.configure(state="disabled" if busy else "normal")
+

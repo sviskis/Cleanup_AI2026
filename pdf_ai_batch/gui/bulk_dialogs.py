@@ -16,15 +16,17 @@ acceptance drivers answer them without a user.
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog
 from typing import Callable
+
+from . import theme
 
 DEFAULT_CHOICE = "<noklusētais template>"
 ENABLE_CHOICES = ("nemainīt", "iespējot", "izslēgt")
 RANGE_HINT = "1 | 1-5 | 1,3,5 | 1-5,8,10-14 | * = visas"
 
 
-class SavePresetDialog(tk.Toplevel):
+class SavePresetDialog(theme.Toplevel):
     """SAVE PRESET: name of the preset file (JOB/CONFIG/presets/<name>.json)."""
 
     def __init__(self, parent: tk.Misc, *, default_name: str = "") -> None:
@@ -35,26 +37,35 @@ class SavePresetDialog(tk.Toplevel):
         self.result: str | None = None
 
         self.columnconfigure(1, weight=1)
-        ttk.Label(self, text="Nosaukums:").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 2))
-        self.name_var = tk.StringVar(value=default_name)
-        entry = ttk.Entry(self, textvariable=self.name_var, width=36)
-        entry.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(10, 2))
+        theme.Label(self, text="Nosaukums:").grid(
+            row=0, column=0, sticky="w", padx=(14, 8), pady=(14, 2)
+        )
+        self.name_var = tk.StringVar(master=self, value=default_name)
+        entry = theme.Entry(self, textvariable=self.name_var, width=260)
+        entry.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=(14, 2))
         entry.focus_set()
         entry.select_range(0, tk.END)
-        ttk.Label(self, text="Fails: JOB/CONFIG/presets/<nosaukums>.json", foreground="#666").grid(
-            row=1, column=1, sticky="w", padx=(0, 10)
+        theme.Muted(self, text="Fails: JOB/CONFIG/presets/<nosaukums>.json").grid(
+            row=1, column=1, sticky="w", padx=(0, 14)
         )
-        self.error = ttk.Label(self, text="", foreground="#b00020", wraplength=380, justify="left")
-        self.error.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(4, 0))
+        self.error = theme.Label(
+            self, text="", text_color=theme.COLORS["red"], wraplength=380, justify="left"
+        )
+        self.error.grid(row=2, column=0, columnspan=2, sticky="w", padx=14, pady=(6, 0))
 
-        buttons = ttk.Frame(self, padding=10)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="ew")
+        buttons = theme.Frame(self)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", padx=14, pady=14)
         for index in range(2):
             buttons.columnconfigure(index, weight=1)
-        ttk.Button(buttons, text="SAGLABĀT", command=self._accept).grid(row=0, column=0, sticky="ew", padx=2)
-        ttk.Button(buttons, text="ATCAUKT", command=self._cancel).grid(row=0, column=1, sticky="ew", padx=2)
+        theme.Button(buttons, text="SAGLABĀT", kind="primary", command=self._accept).grid(
+            row=0, column=0, sticky="ew", padx=2
+        )
+        theme.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
+            row=0, column=1, sticky="ew", padx=2
+        )
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Return>", lambda _event: self._accept())
+
 
     def _accept(self) -> None:
         name = self.name_var.get().strip()
@@ -69,7 +80,7 @@ class SavePresetDialog(tk.Toplevel):
         self.destroy()
 
 
-class RangeAssignDialog(tk.Toplevel):
+class RangeAssignDialog(theme.Toplevel):
     """ASSIGN TO RANGE: one template (and layer) for a whole page selection."""
 
     def __init__(
@@ -94,55 +105,59 @@ class RangeAssignDialog(tk.Toplevel):
         self._on_browse = on_browse
 
         self.columnconfigure(1, weight=1)
-        ttk.Label(self, text=f"Lapas (1-{self._page_count or '?'}):").grid(
-            row=0, column=0, sticky="w", padx=10, pady=(10, 2)
+        theme.Label(self, text=f"Lapas (1-{self._page_count or '?'}):").grid(
+            row=0, column=0, sticky="w", padx=(14, 8), pady=(14, 2)
         )
-        self.pages_var = tk.StringVar(value="")
-        pages_entry = ttk.Entry(self, textvariable=self.pages_var, width=32)
-        pages_entry.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(10, 2))
+        self.pages_var = tk.StringVar(master=self, value="")
+        pages_entry = theme.Entry(self, textvariable=self.pages_var, width=260)
+        pages_entry.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=(14, 2))
         pages_entry.focus_set()
-        ttk.Label(self, text=RANGE_HINT, foreground="#666").grid(
-            row=1, column=1, sticky="w", padx=(0, 10)
-        )
+        theme.Muted(self, text=RANGE_HINT).grid(row=1, column=1, sticky="w", padx=(0, 14))
 
-        ttk.Label(self, text="Template:").grid(row=2, column=0, sticky="w", padx=10, pady=2)
-        self.template_var = tk.StringVar(value=current_template or DEFAULT_CHOICE)
-        self.template_box = ttk.Combobox(
+        theme.Label(self, text="Template:").grid(row=2, column=0, sticky="w", padx=(14, 8), pady=4)
+        self.template_var = tk.StringVar(master=self, value=current_template or DEFAULT_CHOICE)
+        self.template_box = theme.OptionMenu(
             self,
-            textvariable=self.template_var,
+            variable=self.template_var,
             values=[DEFAULT_CHOICE, *self._choices],
-            state="readonly",
-            width=30,
         )
-        self.template_box.grid(row=2, column=1, sticky="ew", padx=(0, 10), pady=2)
-        ttk.Button(self, text="PĀRLŪKOT...", command=self._browse).grid(row=2, column=2, padx=(0, 10))
-
-        ttk.Label(self, text="Layer:").grid(row=3, column=0, sticky="w", padx=10, pady=2)
-        self.layer_var = tk.StringVar(value=current_layer or "ARTWORK")
-        ttk.Entry(self, textvariable=self.layer_var, width=32).grid(
-            row=3, column=1, sticky="ew", padx=(0, 10), pady=2
+        self.template_box.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=4)
+        theme.Button(self, text="PĀRLŪKOT...", command=self._browse).grid(
+            row=2, column=2, padx=(0, 14)
         )
 
-        ttk.Label(self, text="Iespējot:").grid(row=4, column=0, sticky="w", padx=10, pady=2)
-        self.enable_var = tk.StringVar(value=ENABLE_CHOICES[0])
-        ttk.Combobox(
-            self, textvariable=self.enable_var, values=list(ENABLE_CHOICES), state="readonly", width=28
-        ).grid(row=4, column=1, sticky="ew", padx=(0, 10), pady=2)
+        theme.Label(self, text="Layer:").grid(row=3, column=0, sticky="w", padx=(14, 8), pady=4)
+        self.layer_var = tk.StringVar(master=self, value=current_layer or "ARTWORK")
+        theme.Entry(self, textvariable=self.layer_var, width=260).grid(
+            row=3, column=1, sticky="ew", padx=(0, 14), pady=4
+        )
 
-        self.error = ttk.Label(self, text="", foreground="#b00020", wraplength=380, justify="left")
-        self.error.grid(row=5, column=0, columnspan=3, sticky="w", padx=10, pady=(4, 0))
+        theme.Label(self, text="Iespējot:").grid(row=4, column=0, sticky="w", padx=(14, 8), pady=4)
+        self.enable_var = tk.StringVar(master=self, value=ENABLE_CHOICES[0])
+        theme.OptionMenu(
+            self, variable=self.enable_var, values=list(ENABLE_CHOICES)
+        ).grid(row=4, column=1, sticky="ew", padx=(0, 14), pady=4)
 
-        buttons = ttk.Frame(self, padding=10)
-        buttons.grid(row=6, column=0, columnspan=3, sticky="ew")
+        self.error = theme.Label(
+            self, text="", text_color=theme.COLORS["red"], wraplength=380, justify="left"
+        )
+        self.error.grid(row=5, column=0, columnspan=3, sticky="w", padx=14, pady=(6, 0))
+
+        buttons = theme.Frame(self)
+        buttons.grid(row=6, column=0, columnspan=3, sticky="ew", padx=14, pady=14)
         for index in range(2):
             buttons.columnconfigure(index, weight=1)
-        ttk.Button(buttons, text="PIEŠĶIRT", command=self._accept).grid(row=0, column=0, sticky="ew", padx=2)
-        ttk.Button(buttons, text="ATCAUKT", command=self._cancel).grid(row=0, column=1, sticky="ew", padx=2)
+        theme.Button(buttons, text="PIEŠĶIRT", kind="primary", command=self._accept).grid(
+            row=0, column=0, sticky="ew", padx=2
+        )
+        theme.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
+            row=0, column=1, sticky="ew", padx=2
+        )
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Return>", lambda _event: self._accept())
 
     def _browse(self) -> None:
-        if self._on_browse is None or self.template_box.cget("state") != "readonly":
+        if self._on_browse is None:
             return
         paths = filedialog.askopenfilenames(
             parent=self,
@@ -182,7 +197,7 @@ class RangeAssignDialog(tk.Toplevel):
         self.destroy()
 
 
-class SnapshotDialog(tk.Toplevel):
+class SnapshotDialog(theme.Toplevel):
     """RESTORE SNAPSHOT: pick an older plan from `JOB/CONFIG/history`.
 
     The list shows what every snapshot holds (timestamp, reason, how many documents and
@@ -208,28 +223,29 @@ class SnapshotDialog(tk.Toplevel):
         header = "Plāna kopijas mapē JOB/CONFIG/history (jaunākās vispirms)"
         if current:
             header += f" | pašreizējais plāns: {current}"
-        ttk.Label(self, text=header).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
+        theme.Label(self, text=header).grid(
+            row=0, column=0, sticky="w", padx=14, pady=(14, 6)
+        )
 
-        self.listbox = tk.Listbox(self, height=12, width=76, exportselection=False)
-        self.listbox.grid(row=1, column=0, sticky="nsew", padx=10)
+        self.listbox = theme.ListBox(self, height=12, width=76)
+        self.listbox.grid(row=1, column=0, sticky="nsew", padx=14)
         for info in self._snapshots:
             self.listbox.insert(tk.END, info.summary())
         self.listbox.bind("<Double-1>", lambda _event: self._accept())
 
-        ttk.Label(
+        theme.Muted(
             self,
             text="Pirms atjaunošanas pašreizējais plāns tiek nokopēts, tāpēc atjaunošanu var arī atcelt.",
-            foreground="#666",
-        ).grid(row=2, column=0, sticky="w", padx=10, pady=(6, 0))
+        ).grid(row=2, column=0, sticky="w", padx=14, pady=(8, 0))
 
-        buttons = ttk.Frame(self, padding=10)
-        buttons.grid(row=3, column=0, sticky="ew")
+        buttons = theme.Frame(self)
+        buttons.grid(row=3, column=0, sticky="ew", padx=14, pady=14)
         for index in range(2):
             buttons.columnconfigure(index, weight=1)
-        ttk.Button(buttons, text="ATJAUNOT", command=self._accept).grid(
+        theme.Button(buttons, text="ATJAUNOT", kind="primary", command=self._accept).grid(
             row=0, column=0, sticky="ew", padx=2
         )
-        ttk.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
+        theme.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
             row=0, column=1, sticky="ew", padx=2
         )
         self.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -253,7 +269,7 @@ class SnapshotDialog(tk.Toplevel):
         self.destroy()
 
 
-class PresetDialog(tk.Toplevel):
+class PresetDialog(theme.Toplevel):
     """LOAD / APPLY PRESET: pick a preset, read its preview, then apply it.
 
     The preview comes from the core (`AppController.preset_preview`) and is shown
@@ -279,41 +295,44 @@ class PresetDialog(tk.Toplevel):
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
-        ttk.Label(self, text="Preseti mapē JOB/CONFIG/presets (tiks uzlikti aktīvajam PDF):").grid(
-            row=0, column=0, sticky="w", padx=10, pady=(10, 4)
-        )
+        theme.Label(
+            self, text="Preseti mapē JOB/CONFIG/presets (tiks uzlikti aktīvajam PDF):"
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 6))
 
-        self.listbox = tk.Listbox(self, height=8, width=64, exportselection=False)
-        self.listbox.grid(row=1, column=0, sticky="nsew", padx=10)
+        self.listbox = theme.ListBox(self, height=8, width=64)
+        self.listbox.grid(row=1, column=0, sticky="nsew", padx=14)
         for info in self._presets:
             label = info.summary() if getattr(info, "entries", 0) else f"{info.name} (nav derīgs)"
             self.listbox.insert(tk.END, label)
         self.listbox.bind("<<ListboxSelect>>", lambda _event: self._show_preview())
 
-        self.detail = tk.Text(self, height=7, wrap="none", state="disabled")
-        self.detail.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 0))
-        detail_scroll = ttk.Scrollbar(self, orient="vertical", command=self.detail.yview)
-        detail_scroll.grid(row=2, column=1, sticky="ns", pady=(6, 0))
-        self.detail.configure(yscrollcommand=detail_scroll.set)
+        self.detail = theme.Text(self, height=7, wrap="none")
+        self.detail.grid(row=2, column=0, sticky="ew", padx=14, pady=(10, 0))
+        self.detail.configure(state="disabled")
 
-        self.replace_all_var = tk.BooleanVar(value=bool(replace_all_default))
-        ttk.Checkbutton(
+        self.replace_all_var = tk.BooleanVar(master=self, value=bool(replace_all_default))
+        theme.CheckBox(
             self,
             text="Aizstāt arī pārējās lapas (tās atgriežas pie noklusētā template)",
             variable=self.replace_all_var,
-        ).grid(row=3, column=0, sticky="w", padx=10, pady=(6, 0))
+        ).grid(row=3, column=0, sticky="w", padx=14, pady=(10, 0))
 
-        buttons = ttk.Frame(self, padding=10)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="ew")
+        buttons = theme.Frame(self)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", padx=14, pady=14)
         for index in range(2):
             buttons.columnconfigure(index, weight=1)
-        ttk.Button(buttons, text="UZLIKT", command=self._accept).grid(row=0, column=0, sticky="ew", padx=2)
-        ttk.Button(buttons, text="ATCAUKT", command=self._cancel).grid(row=0, column=1, sticky="ew", padx=2)
+        theme.Button(buttons, text="UZLIKT", kind="primary", command=self._accept).grid(
+            row=0, column=0, sticky="ew", padx=2
+        )
+        theme.Button(buttons, text="ATCAUKT", command=self._cancel).grid(
+            row=0, column=1, sticky="ew", padx=2
+        )
         self.protocol("WM_DELETE_WINDOW", self._cancel)
 
         if self._presets:
             self.listbox.selection_set(0)
             self._show_preview()
+
 
     # ------------------------------------------------------------------ helpers
 

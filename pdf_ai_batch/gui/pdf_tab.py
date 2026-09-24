@@ -1,7 +1,7 @@
-"""PDF tab: the JOB's documents (USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS).
+"""PDF section: the JOB's documents (USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS).
 
 One JOB can hold several PDFs; each has its own plan, its own queue states and its
-own outputs. Selecting a row makes that document active: the MAPPING tab then shows
+own outputs. Selecting a row makes that document active: the MAPPING section then shows
 (and edits) exactly that PDF, and RUN CURRENT PDF runs only its pages.
 
 Nothing is rewritten here: a document whose PDF changed size shows `CONFIG STALE`
@@ -11,29 +11,31 @@ and waits for an explicit RECONCILE; a document whose file is gone shows
 
 from __future__ import annotations
 
-import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
+from . import shell, theme
 from .controller import ControllerError
 from .context import GuiContext
 
+#: the config status of a document, in the dark palette (tones, never raw colours)
 STATUS_COLOURS = {
-    "CONFIG STALE": "#a15c00",
-    "MISSING PDF": "#b00020",
-    "PLAN ERROR": "#b00020",
-    "OK": "#1a7f37",
-    "NEW": "#0b5cad",
+    "CONFIG STALE": theme.COLORS["amber"],
+    "MISSING PDF": theme.COLORS["red"],
+    "PLAN ERROR": theme.COLORS["red"],
+    "OK": theme.COLORS["green"],
+    "NEW": theme.COLORS["accent"],
 }
 
 
-class PdfTab(ttk.Frame):
+class PdfTab(theme.Frame):
     """Top: the document table. Bottom: what the core reports about the selection."""
 
-    def __init__(self, parent: ttk.Notebook, context: GuiContext) -> None:
-        super().__init__(parent, padding=8)
+    def __init__(self, parent: Any, context: GuiContext) -> None:
+        super().__init__(parent)
         self.ctx = context
-        self._buttons: list[ttk.Button] = []
+        self._buttons: list[Any] = []
+        self._busy = False  # the last value pushed to the buttons (a no-op is skipped)
         self._rows: list[Any] = []
         self._loading = False  # suppress selection events while filling the table
         self._build()
@@ -42,29 +44,31 @@ class PdfTab(ttk.Frame):
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        bar = ttk.Frame(self)
-        bar.grid(row=0, column=0, sticky="ew")
+        bar = theme.Frame(self)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         for index in range(5):
             bar.columnconfigure(index, weight=1)
         specs = (
-            ("IZMANTOT (MAPPING)", self.on_use, 0, 0),
-            ("IESLĒGT/IZSLĒGT", self.on_toggle_use, 0, 1),
-            ("RECONCILE", self.on_reconcile, 0, 2),
-            ("PIEVIENOT PDF...", self.on_add_pdf, 0, 3),
-            ("ATJAUNOT", self.on_refresh, 0, 4),
+            ("IZMANTOT (MAPPING)", self.on_use, "primary"),
+            ("IESLĒGT/IZSLĒGT", self.on_toggle_use, "ghost"),
+            ("RECONCILE", self.on_reconcile, "ghost"),
+            ("PIEVIENOT PDF...", self.on_add_pdf, "ghost"),
+            ("ATJAUNOT", self.on_refresh, "ghost"),
         )
-        for label, handler, row, column in specs:
-            button = ttk.Button(bar, text=label, command=handler)
-            button.grid(row=row, column=column, sticky="ew", padx=2, pady=2)
+        for column, (label, handler, kind) in enumerate(specs):
+            button = theme.Button(bar, text=label, kind=kind, command=handler)
+            button.grid(row=0, column=column, sticky="ew", padx=2)
             self._buttons.append(button)
 
-        columns = ("use", "pdf", "pages", "config_status", "queue_status")
-        frame = ttk.Frame(self)
-        frame.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        table_card = shell.TitledCard(self, title="Dokumenti (JOB/PDF)")
+        table_card.grid(row=1, column=0, sticky="nsew")
+        frame = table_card.body
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
+
+        columns = ("use", "pdf", "pages", "config_status", "queue_status")
         self.tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
         headings = {
             "use": ("USE", 50, "center", False),
@@ -78,21 +82,24 @@ class PdfTab(ttk.Frame):
             self.tree.column(key, width=width, anchor=anchor, stretch=stretch)
         for label, colour in STATUS_COLOURS.items():
             self.tree.tag_configure(label, foreground=colour)
-        self.tree.tag_configure("disabled", background="#f2f2f2")
-        self.tree.tag_configure("active", background="#eef4fb")
+        self.tree.tag_configure(
+            "disabled", background=theme.COLORS["card_alt"], foreground=theme.COLORS["muted"]
+        )
+        self.tree.tag_configure("active", background=theme.COLORS["selected"])
         self.tree.grid(row=0, column=0, sticky="nsew")
-        vscroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        vscroll = theme.Scrollbar(frame, orientation="vertical", command=self.tree.yview)
         vscroll.grid(row=0, column=1, sticky="ns")
-        hscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        hscroll = theme.Scrollbar(frame, orientation="horizontal", command=self.tree.xview)
         hscroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Double-1>", lambda _event: self.on_use())
 
-        details = ttk.LabelFrame(self, text="Izvēlētais dokuments")
-        details.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        details.columnconfigure(1, weight=1)
-        self.fields: dict[str, ttk.Label] = {}
+        details = shell.TitledCard(self, title="Izvēlētais dokuments")
+        details.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        body = details.body
+        body.columnconfigure(1, weight=1)
+        self.fields: dict[str, Any] = {}
         rows = (
             ("Fails", "name"),
             ("Ceļš", "path"),
@@ -104,12 +111,14 @@ class PdfTab(ttk.Frame):
             ("Statuss", "status"),
         )
         for index, (label, key) in enumerate(rows):
-            ttk.Label(details, text=f"{label}:").grid(row=index, column=0, sticky="nw", pady=2)
-            value = ttk.Label(details, text="-", wraplength=760, justify="left")
+            theme.Label(body, text=f"{label}:", text_color=theme.COLORS["muted"]).grid(
+                row=index, column=0, sticky="nw", pady=2
+            )
+            value = theme.Label(body, text="-", wraplength=760, justify="left")
             value.grid(row=index, column=1, sticky="nw", padx=(8, 0), pady=2)
             self.fields[key] = value
-        self.note = ttk.Label(details, text="", foreground="#444", wraplength=900, justify="left")
-        self.note.grid(row=len(rows), column=0, columnspan=2, sticky="w")
+        self.note = theme.Label(body, text="", wraplength=900, justify="left")
+        self.note.grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(4, 0))
 
     # ------------------------------------------------------------------ actions
 
@@ -210,6 +219,7 @@ class PdfTab(ttk.Frame):
     def on_refresh(self) -> None:
         self.ctx.refresh()
 
+
     # ------------------------------------------------------------------ refresh
 
     def refresh(self, *_args: Any) -> None:
@@ -299,5 +309,15 @@ class PdfTab(ttk.Frame):
         )
 
     def set_busy(self, busy: bool) -> None:
+        """While a batch runs, document actions are disabled.
+
+        An unchanged value returns immediately: every `configure()` on a CTkButton is
+        a full redraw and the window's pump calls this every 120 ms.
+        """
+        busy = bool(busy)
+        if self._busy == busy:
+            return
+        self._busy = busy
         for button in self._buttons:
             button.configure(state="disabled" if busy else "normal")
+

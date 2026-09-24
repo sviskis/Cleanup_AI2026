@@ -15,5 +15,8 @@ pypdf>=4.0
 # Illustrator COM automation - used ONLY inside pdf_ai_batch/adapters/illustrator.py
 pywin32>=306
 
+# the dark GUI theme (gui/theme.py builds every widget from it; no web dependency)
+customtkinter>=6.0
+
 # test runner for pdf_ai_batch/tests
 pytest>=8.0

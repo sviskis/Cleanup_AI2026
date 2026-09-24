@@ -1,8 +1,11 @@
-"""Cleanup AI 2026 - Tkinter GUI (milestone 3).
+"""Cleanup AI 2026 - customtkinter GUI (dark theme, milestone 3 shell).
 
 A thin presentation layer over the proven core:
 
-    gui/main_window.py   the window, the tabs, the event pump, close safety
+    gui/theme.py         the ONLY place with a colour: palette, fonts, ttk dark styling
+    gui/shell.py         the window shell: top bar, sidebar, tab row, advisor cards,
+                         grouped action panel, section stack, status bar
+    gui/main_window.py   the window: shell + the four sections, event pump, close safety
     gui/controller.py    all GUI logic, NO Tk and NO COM (fully testable)
     gui/tasks.py         worker thread + event queue bridge (no Tk imports)
     gui/project_tab.py   JOB folders, new/open project, add PDF/templates
@@ -16,6 +19,8 @@ Rules (see .clinerules and docs/GUI.md):
 
 * the GUI never touches win32com, JSX or state.json directly - everything goes
   through `gui/controller.py` and then the core modules (`core/*`, adapter)
+* every widget is built from `gui/theme.py`: no hex colour outside that module, and
+  customtkinter is the theming foundation (the tables stay ttk, styled by the theme)
 * PDF rendering happens in `pdf_ai_batch/preview` (PyMuPDF); the GUI only draws the
   PNG bytes it receives through the event bus - never a COM call, never Illustrator
 * long work (a batch) runs in a worker thread; the Tk main thread only updates
@@ -28,12 +33,14 @@ Rules (see .clinerules and docs/GUI.md):
 from __future__ import annotations
 
 APP_TITLE = "Cleanup AI 2026"
-MIN_WIDTH = 1020
-MIN_HEIGHT = 660
+#: the shell needs room for the sidebar, the three advisor cards and the action panel
+MIN_WIDTH = 1280
+MIN_HEIGHT = 820
 LOG_POLL_MS = 120
 #: while a batch runs the mapping rows/thumbnails are refreshed this often, so the
 #: page being processed is visibly RUNNING (progress events only arrive afterwards)
 LIVE_STATE_REFRESH_SECONDS = 0.5
+
 
 
 def run_gui(argv: list[str] | None = None) -> int:

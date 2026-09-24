@@ -40,7 +40,7 @@ from . import config as cfg
 from . import report as report_module
 from . import state, validation
 from .naming import find_duplicate_outputs, validate_output_name
-from .pagejob import DOC_STATUS_PLAN_ERROR, DOC_STATUS_STALE
+from .pagejob import DOC_STATUS_PLAN_ERROR, DOC_STATUS_STALE, output_ready
 from .pdf_info import PdfPageCountError, count_pages
 from .template_mapper import default_template, is_template_file, list_templates
 
@@ -323,8 +323,16 @@ def _pdf_section(project: JobProject, plan) -> tuple[PreflightSection, dict]:
             )
         elif document.status == DOC_STATUS_PLAN_ERROR:
             facts["plan_errors"].append(document.pdf_name)
+            # a document whose plan cannot be built is excluded from a run, exactly
+            # like a missing or stale one: it blocks the project only when nothing
+            # else is left to run (see "Izpildāmi dokumenti" below)
             checks.append(
-                _check(f"PDF {document.pdf_name}", False, "plānu nevar izveidot (PLAN ERROR)")
+                _check(
+                    f"PDF {document.pdf_name}",
+                    False,
+                    "plānu nevar izveidot (PLAN ERROR)",
+                    warning=True,
+                )
             )
         else:
             checks.append(
@@ -589,11 +597,30 @@ def _output_section(
         )
     )
 
+    # a DONE page whose output disappeared means the delivered set is incomplete:
+    # that is data loss and must never be reported as a finished project
+    lost = [
+        f"{item.pdf_name} l.{item.page}"
+        for item in queue_items
+        if item.state == state.DONE and not output_ready(item.output)[0]
+    ]
+    checks.append(
+        _check(
+            "DONE output faili",
+            not lost,
+            f"{len(lost)} DONE lapām output nav atrasts: {', '.join(lost[:6])} "
+            f"(RESET šīs lapas un palaid no jauna)"
+            if lost
+            else "visi DONE output faili ir vietā",
+        )
+    )
+
     facts = {
         "output_writable": bool(validation.is_writable(project.output_dir)),
         "duplicate_outputs": sorted(duplicates),
         "invalid_outputs": invalid,
         "existing_outputs": existing,
+        "lost_outputs": lost,
     }
     return PreflightSection("OUTPUT", tuple(checks), facts), facts
 

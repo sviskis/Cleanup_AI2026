@@ -22,11 +22,13 @@ Layout of the produced distribution (`dist/Cleanup AI 2026/`):
     logs/                    application diagnostics (JOB logs stay in JOB/LOG)
     docs/, README.md, VERSION
 
-PyInstaller is used because the application is pure Python plus pywin32, tkinter and
-PyMuPDF: PyInstaller has first class hooks for exactly those (tkinter, pywin32 COM,
-Pillow-free PyMuPDF), builds a real folder distribution with no code changes, and
-keeps `python app.py` working unchanged. It never bundles Illustrator - the .exe talks
-to the installed Illustrator through COM.
+PyInstaller is used because the application is pure Python plus pywin32, tkinter,
+customtkinter (the dark theme, pure Python with JSON theme assets that the
+pyinstaller-hooks-contrib `hook-customtkinter` collects) and PyMuPDF: PyInstaller has
+first class hooks for exactly those (tkinter, pywin32 COM, Pillow-free PyMuPDF), builds
+a real folder distribution with no code changes, and keeps `python app.py` working
+unchanged. It never bundles Illustrator - the .exe talks to the installed Illustrator
+through COM.
 """
 
 import os
@@ -89,6 +91,8 @@ hiddenimports = [
     "tkinter.filedialog",
     "tkinter.messagebox",
     "tkinter.font",
+    "customtkinter",  # the dark theme (its hook collects assets/themes/*.json)
+    "darkdetect",     # customtkinter's "system" appearance mode
     "xml.etree.ElementTree",
 ]
 

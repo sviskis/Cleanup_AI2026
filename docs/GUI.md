@@ -1,13 +1,18 @@
-# GUI (milestones 3-6) - Cleanup AI 2026
+# GUI (milestones 3-6, dark theme) - Cleanup AI 2026
 
 `python app.py`  (or `python app.py --gui`, or `python -m pdf_ai_batch.gui`) opens the
-Tkinter window. Opening it **never** launches Illustrator: Illustrator is only
-contacted for an explicit **HEALTH CHECK** or a **RUN**.
+window: a dark customtkinter shell around the four proven sections. Opening it **never**
+launches Illustrator: Illustrator is only contacted for an explicit **HEALTH CHECK** or
+a **RUN**.
 
 ## Architecture
 
 ```
-gui/main_window.py   the window: 4 tabs, the event pump, close safety, run_task()
+gui/theme.py         the ONLY place with a colour: COLORS, fonts, ttk dark styling,
+                     themed widget classes (CTkFrame/CTkLabel/CTkButton/...)
+gui/shell.py         the shell widgets: TopBar, Sidebar, TabRow, ReviewBar, AdvisorCard,
+                     ActionPanel, SectionStack, StatusBar, TitledCard, StatusDot
+gui/main_window.py   the window: shell + 4 sections, the event pump, close safety
 gui/context.py       GuiContext - what a tab may ask the window for
 gui/controller.py    ALL GUI logic - NO Tk, NO COM, NO state.json writes
 gui/tasks.py         worker thread + EventBus + QueueLogHandler (NO Tk imports)
@@ -23,13 +28,81 @@ GUI widget -> GuiContext -> AppController -> core/*  -> CONFIG/config.json
                                           -> adapters/illustrator.py (COM, run/health only)
 ```
 
-Rules (enforced by `tests/test_gui_controller.py::test_gui_python_sources_never_touch_com_tk_or_state_files_directly`):
+Rules (enforced by `tests/test_gui_controller.py::test_gui_python_sources_never_touch_com_tk_or_state_files_directly`
+and `tests/test_gui_theme.py`):
 
 * no `win32com`/`pythoncom` anywhere under `gui/` - only `adapters/illustrator.py` has COM
 * `controller.py` and `tasks.py` do not import Tk (so the whole GUI logic is unit testable)
 * no direct `state.json` writes: plan edits go to `CONFIG/config.json`, and
   `BatchQueue.build_queue()`/`reset_item()/retry_*()` own every state transition
 * `cleanup.jsx` and the Python<->JSX contract are untouched by the GUI
+* every widget comes from `gui/theme.py` and no hex colour appears outside it
+  (`tests/test_gui_theme.py::test_only_the_theme_module_knows_a_colour`); customtkinter is
+  the theming foundation, the tables stay `ttk.Treeview` and are themed through ttk
+
+## The dark theme (gui/theme.py)
+
+| Token | Value | Where |
+| --- | --- | --- |
+| `bg` | `#0f1117` | the main shell |
+| `sidebar` | `#0d1018` | the left navigation |
+| `card` | `#161925` | cards, tables, panels |
+| `panel` | `#12151f` | the right action panel, the status bar |
+| `text` / `text_secondary` / `muted` | `#e2e8f0` / `#a0aec0` / `#4a5568` | the blue-gray text hierarchy |
+| `accent` | `#63b3ed` | active nav item, primary button border, tab underline, progress |
+
+* Tone dots: `ok` green, `warn` amber, `busy` accent, `error` red, `idle` secondary gray
+  and `unknown` purple (the mockup's third dot: "not known yet"). `theme.state_colours()`
+  maps the queue states onto those tones, so a tile, a table tag and an advisor card
+  always agree.
+* `apply_theme(root)` sets `appearance_mode="dark"` + `color_theme="blue"`, the window
+  colour, the native tk options (menus, list boxes) and a `clam` based dark `ttk.Style`
+  for `Treeview`, scrollbars and separators. It needs the window: a `ttk.Style()` without
+  a master creates a *plain* `tkinter.Tk` and makes it the default root, and every
+  master-less Tk object (a `tk.PhotoImage`, a `tk.BooleanVar`) would then be created in
+  that hidden interpreter - the classic `image "pyimageN" doesn't exist` failure. The
+  GUI therefore always passes an explicit master (`gui/preview_panel.py::_photo`).
+* Borders are 1 px: tkinter has no sub-pixel lines.
+* The window is built while withdrawn and only then deiconified, so there is no white
+  flash on startup.
+
+## The shell (gui/shell.py, gui/main_window.py)
+
+```text
++----------------------------------------------------------------+  +-------------+
+| project name        status chips          operator / version    |  | REVIEW      |
++----------------------------------------------------------------+  | PLAN        |
+| PROJECT | PDF | MAPPING | RUN / LOG      (accent underline)      |  | LOOP        |
++---------+--------------------------------------------+---------+  | PROJECT     |
+| NAVIGACIJA | review question + 3 advisor cards       | actions |  | REPORTS     |
+| 1 PROJECT  | --------------------------------------- | grouped |  | MONITORING  |
+| 2 PDF      | the visible section (the proven tab)     | by      |  |             |
+| 3 MAPPING  |                                          | section |  |             |
+| 4 RUN/LOG  |                                          |         |  |             |
++---------+--------------------------------------------+---------+  +-------------+
+| status line                                        busy label   |
++----------------------------------------------------------------+
+```
+
+* **Top bar**: the JOB name (left), five status chips (JOB / PDF / PLĀNS / RINDA /
+  ILLUSTRATOR, each with a tone dot), the Windows user and the version (right).
+* **Sidebar and tab row**: numbered navigation items with an accent left border for the
+  active one, and the same four sections as a tab row with an accent underline. Both call
+  `MainWindow.show_section()`; a `SectionStack` (a notebook compatible
+  `add / tabs / tab / select`) shows one section at a time - the section widgets
+  themselves are unchanged.
+* **Review bar and advisor cards**: the question "Vai plāns ir gatavs palaišanai?" plus
+  the answer from `AppController.can_run()`/`validation_failures()`, and three cards
+  (PLĀNS / RINDA / ILLUSTRATOR) with a dot, a metric and one line of detail. Nothing is
+  counted in the GUI: every number comes from `controller.progress()`,
+  `controller.documents()` and `controller.illustrator_state` (`None` = not checked yet =
+  the purple dot, so reading the shell never touches COM).
+* **Right action panel**: the mockup's groups - Review, Plan, Loop, Project, Reports,
+  Monitoring - filled with the existing handlers of the sections (`RUN SELECTED` ->
+  `RunTab.on_run_selected`, `RESTORE SNAPSHOT` -> `MappingTab.on_restore`, ...). The
+  overwrite switch of the Loop group is the RUN section's own `BooleanVar`. While a batch
+  runs every mutating control is disabled; only the three read-only Monitoring actions
+  stay live.
 
 ## Threading
 
@@ -48,9 +121,12 @@ run_task(label, task)  --------------->  TaskRunner thread: BatchQueue + adapter
 * the log view is a **view**: `JOB/LOG/app.log` and `JOB/LOG/batch_<timestamp>.log`
   remain canonical (the `QueueLogHandler` only mirrors records into the widget).
 
-## Tabs
+## Sections
 
-| Tab | What it does | Core it uses |
+The four sections below are shown in the centre of the shell (the section action buttons
+also appear in the right action panel, see above).
+
+| Section | What it does | Core it uses |
 |---|---|---|
 | PROJECT | NEW PROJECT / OPEN PROJECT / ADD PDF / ADD TEMPLATES / OPEN JOB FOLDER; shows the six JOB folders with their state | `core/project.py` |
 | PDF | the JOB's **document list**: `USE / PDF / PAGES / CONFIG STATUS / QUEUE STATUS` plus IZMANTOT (makes it the active document), IESLĒGT/IZSLĒGT (USE), RECONCILE, PIEVIENOT PDF..., ATJAUNOT; details: path, page count, method, size, config status, queue status, document status | `core/pdf_info.py`, `core/pagejob.py`, `core/config.py`, `core/queue.py` |

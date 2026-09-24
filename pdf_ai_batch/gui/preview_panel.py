@@ -10,6 +10,9 @@ plan is the single source of truth). A click here only ASKS the tab to select pa
 (`on_select_pages`); the tab then calls `select_pages()` back - one direction, no
 duplicated selection state. Template/layer/output/state are never edited here either:
 the buttons call the mapping tab, which calls the existing controller/core APIs.
+
+The dark palette comes from `gui/theme.py` (the canvases keep their raw `tk.Canvas`,
+because customtkinter has no canvas and the tiles are drawn with canvas items).
 """
 
 from __future__ import annotations
@@ -17,26 +20,20 @@ from __future__ import annotations
 import base64
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
 from typing import Any, Callable
 
 from ..preview.cache import KIND_PREVIEW, KIND_THUMBNAIL
 from ..preview.renderer import DEFAULT_THUMBNAIL_WIDTH
+from . import shell, theme
 from .context import GuiContext
 
-STATE_COLOURS = {
-    "DONE": "#1a7f37",
-    "ERROR": "#b00020",
-    "INTERRUPTED": "#a15c00",
-    "SKIPPED": "#555555",
-    "RUNNING": "#0b5cad",
-    "WAITING": "#111111",
-    "PREVIEW ERROR": "#b00020",
-}
-TILE_BACKGROUND = "#ffffff"
-TILE_SELECTED = "#cfe3f8"
-TILE_FOCUS = "#0b5cad"
-TILE_BORDER = "#d0d0d0"
+STATE_COLOURS = theme.state_colours()
+TILE_BACKGROUND = theme.COLORS["card"]
+TILE_SELECTED = theme.COLORS["selected"]
+TILE_FOCUS = theme.COLORS["accent"]
+TILE_BORDER = theme.COLORS["border_soft"]
+TILE_DISABLED = theme.COLORS["card_alt"]
+TILE_SLOT = theme.COLORS["input"]
 TILE_PAD = 6
 TILE_LINE = 16
 FALLBACK_ASPECT = 1.4142
@@ -46,10 +43,10 @@ MAX_ZOOM = 4.0
 INITIAL_THUMBNAILS = 12
 NEIGHBOURHOOD = 6
 MAX_TILE_IMAGES = 400
-DEFAULT_PANE_HEIGHT = 300
+DEFAULT_PANE_HEIGHT = 320
 
 
-class PreviewPanel(ttk.Frame):
+class PreviewPanel(theme.Frame):
     """Thumbnail browser + large preview + page info, embedded in the MAPPING tab."""
 
     def __init__(
@@ -91,74 +88,88 @@ class PreviewPanel(ttk.Frame):
         self._zoom = 0.0  # 0.0 = FIT
         self._columns = 1
         self._content_height = 0.0
-        self._buttons: list[ttk.Button] = []
+        self._buttons: list[Any] = []
+        self._busy = False  # the last value pushed to the buttons (a no-op is skipped)
         self._build()
+
 
     # ------------------------------------------------------------------ widgets
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
 
-        header = ttk.Frame(self)
+        header = theme.Frame(self)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        self.header_label = ttk.Label(header, text="Lapas: -", font=("Segoe UI", 10, "bold"))
+        self.header_label = theme.Heading(header, text="Lapas: -")
         self.header_label.grid(row=0, column=0, sticky="w")
-        self.header_detail = ttk.Label(header, text="", foreground="#444")
+        self.header_detail = theme.Label(header, text="")
         self.header_detail.grid(row=0, column=1, sticky="e")
 
-        holder = ttk.Frame(self, height=self.pane_height)
+        holder = theme.Frame(self, height=self.pane_height)
         holder.grid(row=1, column=0, sticky="ew", pady=(4, 4))
         holder.grid_propagate(False)  # the pane keeps its height; the table below grows
         holder.columnconfigure(0, weight=1)
         holder.rowconfigure(0, weight=1)
-        panes = ttk.Panedwindow(holder, orient="horizontal")
-        panes.grid(row=0, column=0, sticky="nsew")
 
-        thumbs = ttk.LabelFrame(panes, text="Lapas (thumbnail)")
-        thumbs.columnconfigure(0, weight=1)
-        thumbs.rowconfigure(0, weight=1)
-        self.thumb_canvas = tk.Canvas(thumbs, highlightthickness=0, background="#fbfbfb")
+        panes = theme.Frame(holder)
+        panes.grid(row=0, column=0, sticky="nsew")
+        panes.columnconfigure(0, weight=3)
+        panes.columnconfigure(1, weight=5)
+        panes.rowconfigure(0, weight=1)
+
+        thumbs = shell.TitledCard(panes, title="Lapas (thumbnail)")
+        thumbs.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        thumbs_body = thumbs.body
+        thumbs_body.columnconfigure(0, weight=1)
+        thumbs_body.rowconfigure(0, weight=1)
+        self.thumb_canvas = tk.Canvas(
+            thumbs_body, highlightthickness=0, background=TILE_SLOT
+        )
         self.thumb_canvas.grid(row=0, column=0, sticky="nsew")
-        thumb_scroll = ttk.Scrollbar(thumbs, orient="vertical", command=self.thumb_canvas.yview)
+        thumb_scroll = theme.Scrollbar(
+            thumbs_body, orientation="vertical", command=self.thumb_canvas.yview
+        )
         thumb_scroll.grid(row=0, column=1, sticky="ns")
         self.thumb_canvas.configure(yscrollcommand=thumb_scroll.set)
         self.thumb_canvas.bind("<Button-1>", self._on_thumb_click)
         self.thumb_canvas.bind("<Configure>", self._on_thumb_resize)
         self.thumb_canvas.bind("<MouseWheel>", self._on_wheel)
-        panes.add(thumbs, weight=3)
 
-        preview = ttk.LabelFrame(panes, text="Priekšskatījums")
-        preview.columnconfigure(0, weight=1)
-        preview.rowconfigure(0, weight=1)
-        self.preview_canvas = tk.Canvas(preview, highlightthickness=0, background="#f2f2f2")
+        preview = shell.TitledCard(panes, title="Priekšskatījums")
+        preview.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        preview_body = preview.body
+        preview_body.columnconfigure(0, weight=1)
+        preview_body.rowconfigure(0, weight=1)
+        self.preview_canvas = tk.Canvas(
+            preview_body, highlightthickness=0, background=TILE_SLOT
+        )
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.preview_canvas.bind("<Configure>", self._on_preview_resize)
-        controls = ttk.Frame(preview)
-        controls.grid(row=1, column=0, sticky="ew", pady=(4, 2))
+        controls = theme.Frame(preview_body)
+        controls.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         for label, command in (
             ("FIT", self.on_fit),
             ("100%", self.on_actual_size),
             ("+", self.on_zoom_in),
             ("-", self.on_zoom_out),
         ):
-            button = ttk.Button(controls, text=label, width=5, command=command)
+            button = theme.Button(controls, text=label, width=54, command=command)
             button.pack(side="left", padx=2)
             self._buttons.append(button)
-        self.zoom_label = ttk.Label(controls, text="fit", foreground="#444")
+        self.zoom_label = theme.Label(controls, text="fit")
         self.zoom_label.pack(side="left", padx=(8, 0))
-        self.output_button = ttk.Button(
-            controls, text="OPEN OUTPUT", command=lambda: self._action("open_output")
+        self.output_button = theme.Button(
+            controls, text="OPEN OUTPUT", kind="primary", command=lambda: self._action("open_output")
         )
         self.output_button.pack(side="right", padx=2)
         self._buttons.append(self.output_button)
-        panes.add(preview, weight=5)
 
-        info = ttk.Frame(self)
-        info.grid(row=2, column=0, sticky="ew")
+        info = theme.Frame(self)
+        info.grid(row=2, column=0, sticky="ew", pady=(6, 0))
         for column in (1, 3):
             info.columnconfigure(column, weight=1)
-        self.info_labels: dict[str, ttk.Label] = {}
+        self.info_labels: dict[str, Any] = {}
         fields = (
             ("PDF", "pdf"),
             ("Lapa", "page"),
@@ -171,29 +182,40 @@ class PreviewPanel(ttk.Frame):
         )
         for index, (label, key) in enumerate(fields):
             line, column = divmod(index, 2)
-            ttk.Label(info, text=f"{label}:").grid(row=line, column=column * 2, sticky="nw", pady=1)
-            value = ttk.Label(info, text="-", justify="left", wraplength=460)
+            theme.Label(info, text=f"{label}:", text_color=theme.COLORS["muted"]).grid(
+                row=line, column=column * 2, sticky="nw", pady=1
+            )
+            value = theme.Label(info, text="-", justify="left", wraplength=460)
             value.grid(row=line, column=column * 2 + 1, sticky="nw", padx=(6, 16), pady=1)
             self.info_labels[key] = value
 
-        self.detail_label = ttk.Label(self, text="", foreground="#b00020", wraplength=1200, justify="left")
-        self.detail_label.grid(row=3, column=0, sticky="w", pady=(2, 0))
+        self.detail_label = theme.Label(
+            self,
+            text="",
+            text_color=theme.COLORS["red"],
+            wraplength=1200,
+            justify="left",
+        )
+        self.detail_label.grid(row=3, column=0, sticky="w", pady=(4, 0))
 
-        bar = ttk.Frame(self)
-        bar.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        bar = theme.Frame(self)
+        bar.grid(row=4, column=0, sticky="ew", pady=(6, 0))
         actions = (
-            ("ASSIGN TEMPLATE TO SELECTED", "assign"),
-            ("USE DEFAULT TEMPLATE", "default"),
-            ("ENABLE", "enable"),
-            ("DISABLE", "disable"),
-            ("RESET", "reset"),
+            ("ASSIGN TEMPLATE TO SELECTED", "assign", "primary"),
+            ("USE DEFAULT TEMPLATE", "default", "ghost"),
+            ("ENABLE", "enable", "ghost"),
+            ("DISABLE", "disable", "ghost"),
+            ("RESET", "reset", "ghost"),
         )
         for index in range(len(actions)):
             bar.columnconfigure(index, weight=1)
-        for index, (label, name) in enumerate(actions):
-            button = ttk.Button(bar, text=label, command=lambda value=name: self._action(value))
+        for index, (label, name, kind) in enumerate(actions):
+            button = theme.Button(
+                bar, text=label, kind=kind, command=lambda value=name: self._action(value)
+            )
             button.grid(row=0, column=index, sticky="ew", padx=2)
             self._buttons.append(button)
+
 
     # ---------------------------------------------------------------- public API
 
@@ -288,9 +310,20 @@ class PreviewPanel(ttk.Frame):
             self._update_info()
 
     def set_busy(self, busy: bool) -> None:
-        """While a batch runs the page actions are disabled (the worker owns state)."""
+        """While a batch runs the page actions are disabled (the worker owns state).
+
+        An unchanged value skips the ten button redraws; `output_button` is written
+        from outside this method (`_update_info`), so it is re-asserted on every call
+        - that is what keeps the window's pump able to correct it.
+        """
+        busy = bool(busy)
+        if self._busy == busy:
+            self._refresh_output_button()
+            return
+        self._busy = busy
         for button in self._buttons:
             button.configure(state="disabled" if busy else "normal")
+        self._refresh_output_button()
 
     # -------------------------------------------------------------- test access
 
@@ -403,9 +436,19 @@ class PreviewPanel(ttk.Frame):
         elif self._errors.get(row.page):
             detail = f"PREVIEW ERROR: {self._errors[row.page]}"
         self.detail_label.configure(text=detail)
-        self.output_button.configure(
-            state="normal" if row.state == "DONE" else "disabled"
-        )
+        self._refresh_output_button()
+
+    def _refresh_output_button(self) -> None:
+        """OPEN OUTPUT follows the focused page - `_update_info` writes it as well.
+
+        The wanted state is compared with the state the button really has, so a write
+        from outside `set_busy` is corrected in the same tick, while an unchanged
+        button costs nothing (no CustomTkinter redraw every 120 ms).
+        """
+        row = self._row_for(self._focus)
+        wanted = "normal" if row is not None and row.state == "DONE" else "disabled"
+        if str(self.output_button.cget("state")) != wanted:
+            self.output_button.configure(state=wanted)
 
 
     # --------------------------------------------------------------- tile drawing
@@ -441,11 +484,12 @@ class PreviewPanel(ttk.Frame):
             )
             slot = self.thumb_canvas.create_rectangle(
                 x + TILE_PAD, y + TILE_PAD, x + tile_width - TILE_PAD * 2, y + TILE_PAD + slot_height,
-                fill="#f0f0f0", outline="", tags=(f"tile:{page}", "slot"),
+                fill=TILE_SLOT, outline="", tags=(f"tile:{page}", "slot"),
             )
             label = self.thumb_canvas.create_text(
                 x + tile_width // 2, y + tile_height - TILE_LINE * 2 - TILE_PAD // 2,
-                text=f"{page:03d}", tags=(f"tile:{page}", "page-label"),
+                text=f"{page:03d}", fill=theme.COLORS["text_secondary"],
+                tags=(f"tile:{page}", "page-label"),
             )
             state = self.thumb_canvas.create_text(
                 x + tile_width // 2, y + tile_height - TILE_LINE - TILE_PAD // 2,
@@ -495,7 +539,7 @@ class PreviewPanel(ttk.Frame):
         tile = self._tiles.get(page)
         if tile is None or not image_bytes:
             return
-        photo = self._photo((page, "thumb"), image_bytes)
+        photo = self._photo((page, "thumb"), image_bytes, self.thumb_canvas)
         if photo is None:
             return
         centre_y = tile["y"] + TILE_PAD + tile["slot_h"] // 2
@@ -510,12 +554,20 @@ class PreviewPanel(ttk.Frame):
         self.thumb_canvas.tag_raise("state")
         self._highlight_tiles()
 
-    def _photo(self, key: tuple, image_bytes: bytes) -> tk.PhotoImage | None:
+    def _photo(self, key: tuple, image_bytes: bytes, master: tk.Misc) -> tk.PhotoImage | None:
+        """Decode one PNG into a Tk image owned by `master` (never the default root).
+
+        The master matters: an image without one belongs to the default Tk interpreter,
+        which is not necessarily the window's (customtkinter and ttk create their own),
+        and `create_image` would then fail with `image "pyimageN" doesn't exist`.
+        """
         cached = self._images.get(key)
         if cached is not None:
             return cached
         try:
-            photo = tk.PhotoImage(data=base64.b64encode(image_bytes).decode("ascii"))
+            photo = tk.PhotoImage(
+                master=master, data=base64.b64encode(image_bytes).decode("ascii")
+            )
         except Exception as exc:  # noqa: BLE001 - a broken image is a preview problem
             self.ctx.report(f"Preview attēlu nevar parādīt: {exc}", error=True)
             return None
@@ -551,10 +603,12 @@ class PreviewPanel(ttk.Frame):
             return
         label = "PREVIEW ERROR" if state == "PREVIEW ERROR" else (state or "-")
         tile["state"] = label
-        colour = STATE_COLOURS.get(state, STATE_COLOURS.get("WAITING", "#111111"))
+        colour = STATE_COLOURS.get(state, STATE_COLOURS.get("WAITING", theme.COLORS["text"]))
         self.thumb_canvas.itemconfigure(tile["state_item"], text=label, fill=colour)
         enabled = bool(tile.get("enabled", True))
-        self.thumb_canvas.itemconfigure(tile["frame"], fill=TILE_BACKGROUND if enabled else "#f2f2f2")
+        self.thumb_canvas.itemconfigure(
+            tile["frame"], fill=TILE_BACKGROUND if enabled else TILE_DISABLED
+        )
 
     def _highlight_tiles(self) -> None:
         selected = set(self._selection)
@@ -569,7 +623,8 @@ class PreviewPanel(ttk.Frame):
                 self.thumb_canvas.itemconfigure(tile["frame"], fill=TILE_SELECTED)
             elif page != self._focus:
                 self.thumb_canvas.itemconfigure(
-                    tile["frame"], fill=TILE_BACKGROUND if tile.get("enabled", True) else "#f2f2f2"
+                    tile["frame"],
+                    fill=TILE_BACKGROUND if tile.get("enabled", True) else TILE_DISABLED,
                 )
 
     # ------------------------------------------------------------ large preview
@@ -578,7 +633,7 @@ class PreviewPanel(ttk.Frame):
         self.preview_canvas.delete("all")
         if not image_bytes:
             return
-        photo = self._photo((self._focus or 0, "large"), image_bytes)
+        photo = self._photo((self._focus or 0, "large"), image_bytes, self.preview_canvas)
         if photo is None:
             return
         self._preview_images = [photo]  # only the newest preview is kept
@@ -586,7 +641,7 @@ class PreviewPanel(ttk.Frame):
         height = self.preview_canvas.winfo_height() or photo.height()
         self.preview_canvas.create_image(width // 2, height // 2, image=photo, tags=("preview",))
         self.preview_canvas.create_text(
-            8, height - 8, anchor="sw", fill="#666",
+            8, height - 8, anchor="sw", fill=theme.COLORS["muted"],
             text=f"{photo.width()} x {photo.height()} px",
         )
         label = "fit" if self._zoom == 0 else f"{self._zoom * 100:.0f}%"
